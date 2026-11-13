@@ -9,6 +9,8 @@ import '../services/app_settings.dart';
 import '../services/live_sync.dart';
 import '../services/playback_service.dart';
 import '../services/srt_sync.dart';
+import '../theme/ornaments.dart';
+import '../theme/tome_theme.dart';
 import '../utils/format.dart';
 import '../widgets/bookmarks_sheet.dart';
 import '../widgets/characters_sheet.dart';
@@ -63,7 +65,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
     return ListenableBuilder(
       listenable: _c,
       builder: (context, _) {
-        return Scaffold(
+        return TomeBackground(
+          child: Scaffold(
+          backgroundColor: Colors.transparent,
           appBar: AppBar(
             title: Text(widget.book.title, overflow: TextOverflow.ellipsis),
             actions: [
@@ -91,6 +95,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
             ],
           ),
           body: _buildBody(),
+        ),
         );
       },
     );
@@ -114,6 +119,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         children: [
           _overallProgress(),
           _toolsRow(),
+          const OrnateDivider(),
           Expanded(
             child: _textMode
                 ? _textView()
@@ -436,14 +442,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
     final cover = widget.book.coverPath;
     return AspectRatio(
       aspectRatio: 1,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
+      child: OrnateFrame(
+        radius: 12,
+        thickness: 3,
+        glow: _c.isPlaying, // the tome glows while it's being read
         child: cover != null
             ? Image.file(File(cover), fit: BoxFit.cover)
-            : Container(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: const Icon(Icons.headphones, size: 96),
-              ),
+            : TomeCoverPlaceholder(title: widget.book.title),
       ),
     );
   }
@@ -579,10 +584,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
           label: formatSkip(short),
           onTap: () => _c.seekBy(-short),
         ),
-        IconButton.filled(
-          iconSize: 48,
-          padding: const EdgeInsets.all(12),
-          icon: Icon(_c.isPlaying ? Icons.pause : Icons.play_arrow),
+        MedallionButton(
+          icon: _c.isPlaying ? Icons.pause : Icons.play_arrow,
           onPressed: _c.togglePlay,
         ),
         _SkipButton(
@@ -857,8 +860,8 @@ class _SkipButton extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 32),
-            Text(label),
+            Icon(icon, size: 32, color: context.tome.trim),
+            Text(label, style: TextStyle(color: context.tome.textMuted)),
           ],
         ),
       ),

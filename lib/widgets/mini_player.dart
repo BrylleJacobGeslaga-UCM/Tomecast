@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../services/playback_service.dart';
+import '../theme/ornaments.dart';
+import '../theme/tome_theme.dart';
 
 /// Small bar at the bottom of the library showing the current book.
 class MiniPlayer extends StatelessWidget {
@@ -21,8 +23,10 @@ class MiniPlayer extends StatelessWidget {
         final book = service.book;
         if (book == null) return const SizedBox.shrink();
 
+        final p = context.tome;
         return Material(
-          color: theme.colorScheme.surfaceContainerHigh,
+          color: p.surface,
+          shape: Border(top: BorderSide(color: p.trim.withValues(alpha: 0.7))),
           child: InkWell(
             onTap: onOpen,
             child: SafeArea(
@@ -37,7 +41,7 @@ class MiniPlayer extends StatelessWidget {
                       child: book.coverPath != null
                           ? Image.file(File(book.coverPath!),
                               fit: BoxFit.cover, cacheWidth: 200)
-                          : const Icon(Icons.headphones),
+                          : TomeCoverPlaceholder(title: book.title),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -58,6 +62,7 @@ class MiniPlayer extends StatelessWidget {
                     ),
                     IconButton(
                       iconSize: 36,
+                      color: p.glow,
                       icon: Icon(service.isPlaying
                           ? Icons.pause_circle_filled
                           : Icons.play_circle_filled),

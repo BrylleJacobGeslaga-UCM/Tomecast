@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 
 import '../services/playback_service.dart';
 import '../services/text_sync.dart';
+import '../theme/tome_theme.dart';
 
 /// Shows the book's text and highlights the sentence being read.
 /// Scrolls along with the narration; tap any sentence to jump there.
@@ -215,8 +216,8 @@ class _ReadAlongViewState extends State<ReadAlongView> {
       height: 1.4,
     );
     final activeStyle = TextStyle(
-      backgroundColor: theme.colorScheme.primaryContainer,
-      color: theme.colorScheme.onPrimaryContainer,
+      backgroundColor: context.tome.highlight,
+      color: context.tome.dark ? Colors.white : context.tome.text,
     );
 
     return NotificationListener<UserScrollNotification>(

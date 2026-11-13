@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../models/book.dart';
+import '../theme/ornaments.dart';
 
 class BookTile extends StatelessWidget {
   final Book book;
@@ -110,8 +111,5 @@ class BookTile extends StatelessWidget {
     }
   }
 
-  Widget _placeholder(ThemeData theme) => Container(
-        color: theme.colorScheme.surfaceContainerHighest,
-        child: Icon(Icons.headphones, size: 40, color: theme.colorScheme.primary),
-      );
+  Widget _placeholder(ThemeData theme) => TomeCoverPlaceholder(title: book.title);
 }

@@ -2,7 +2,8 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 
-import 'screens/library_screen.dart';
+import 'screens/splash_screen.dart';
+import 'theme/tome_theme.dart';
 import 'services/app_settings.dart';
 import 'services/audio_handler.dart';
 import 'services/playback_service.dart';
@@ -39,21 +40,15 @@ class TomecastApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Tomecast',
-      debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.dark,
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        colorSchemeSeed: Colors.lightBlue,
-        scaffoldBackgroundColor: Colors.black,
+    // Rebuilds with the new look when you change it in Settings.
+    return ListenableBuilder(
+      listenable: AppSettings.instance,
+      builder: (context, _) => MaterialApp(
+        title: 'Tomecast',
+        debugShowCheckedModeBanner: false,
+        theme: buildTomeTheme(AppSettings.instance.style),
+        home: const SplashScreen(),
       ),
-      theme: ThemeData(
-        useMaterial3: true,
-        colorSchemeSeed: Colors.lightBlue,
-      ),
-      home: const LibraryScreen(),
     );
   }
 }

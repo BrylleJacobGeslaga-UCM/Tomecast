@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../theme/tome_theme.dart';
+
 /// What headset / earbud next & previous buttons do.
 enum HeadsetAction { skip30, chapterOrFile }
 
@@ -14,6 +16,17 @@ class AppSettings extends ChangeNotifier {
   Future<void> load() async {
     _prefs = await SharedPreferences.getInstance();
   }
+
+  // ---- Appearance ----
+  TomeStyle get style => TomeStyle.values.firstWhere(
+        (s) => s.name == _prefs.getString('style'),
+        orElse: () => TomeStyle.arcane,
+      );
+  set style(TomeStyle v) => _set(() => _prefs.setString('style', v.name));
+
+  /// Bookshelf grid (true) or list (false).
+  bool get shelfLayout => _prefs.getBool('shelf_layout') ?? true;
+  set shelfLayout(bool v) => _set(() => _prefs.setBool('shelf_layout', v));
 
   // ---- Library ----
   String? get rootFolder => _prefs.getString('root_folder');

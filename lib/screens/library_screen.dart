@@ -9,7 +9,9 @@ import '../services/live_sync.dart';
 import '../services/playback_service.dart';
 import '../services/progress_store.dart';
 import '../services/read_along.dart';
+import '../theme/ornaments.dart';
 import '../widgets/book_tile.dart';
+import '../widgets/bookshelf.dart';
 import '../widgets/cover_search_sheet.dart';
 import '../widgets/mini_player.dart';
 import 'player_screen.dart';
@@ -97,11 +99,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
+    return TomeBackground(
+      child: DefaultTabController(
       length: 4,
       child: Scaffold(
+        backgroundColor: Colors.transparent,
         appBar: AppBar(
-          title: const Text('Library'),
+          title: const Text('LIBRARY'),
+          centerTitle: false,
           actions: [
             IconButton(
               tooltip: 'Rescan',
@@ -141,6 +146,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
           },
         ),
       ),
+      ),
     );
   }
 
@@ -177,7 +183,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     return TabBarView(
       children: [
-        _bookList(_books),
+        _bookList(_books, header: _continueCard()),
         _bookList(_books.where((b) => b.status == BookStatus.newBook).toList()),
         _bookList(_startedBooks()),
         _bookList(_books.where((b) => b.status == BookStatus.finished).toList()),
@@ -438,9 +444,27 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       );
 
-  Widget _bookList(List<Book> books) {
+  /// Most recently played unfinished book, shown above the shelves.
+  Widget? _continueCard() {
+    final started = _startedBooks();
+    if (started.isEmpty) return null;
+    return ContinueCard(book: started.first, onTap: () => _openBook(started.first));
+  }
+
+  Widget _bookList(List<Book> books, {Widget? header}) {
     if (books.isEmpty) {
       return const Center(child: Text('No books here yet'));
+    }
+    if (AppSettings.instance.shelfLayout) {
+      return RefreshIndicator(
+        onRefresh: _scan,
+        child: Bookshelf(
+          books: books,
+          header: header,
+          onTap: _openBook,
+          onLongPress: _showBookMenu,
+        ),
+      );
     }
     return RefreshIndicator(
       onRefresh: _scan,

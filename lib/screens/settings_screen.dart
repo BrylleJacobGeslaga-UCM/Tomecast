@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/app_settings.dart';
 import '../services/folder_access.dart';
 import '../services/playback_service.dart';
+import '../theme/tome_theme.dart';
 import '../utils/format.dart';
 
 /// Returns true (via Navigator.pop) if the audiobook folder was changed,
@@ -65,6 +66,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
         appBar: AppBar(title: const Text('Settings')),
         body: ListView(
           children: [
+            _header('Appearance'),
+            ListTile(
+              leading: const Icon(Icons.palette_outlined),
+              title: const Text('Theme'),
+              subtitle: Text(_s.style.label),
+              onTap: _pickStyle,
+            ),
+            SwitchListTile(
+              secondary: const Icon(Icons.shelves),
+              title: const Text('Bookshelf view'),
+              subtitle: const Text('Show books as covers on shelves (off = list)'),
+              value: _s.shelfLayout,
+              onChanged: (v) => setState(() => _s.shelfLayout = v),
+            ),
+
             _header('Library'),
             ListTile(
               leading: const Icon(Icons.folder_outlined),
@@ -191,6 +207,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  Future<void> _pickStyle() async {
+    final picked = await showDialog<TomeStyle>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Theme'),
+        children: [
+          for (final style in TomeStyle.values)
+            ListTile(
+              leading: _Swatch(TomePalette.of(style)),
+              title: Text(style.label),
+              subtitle: Text(style.description),
+              trailing: style == _s.style ? const Icon(Icons.check) : null,
+              onTap: () => Navigator.pop(context, style),
+            ),
+        ],
+      ),
+    );
+    if (picked != null) setState(() => _s.style = picked);
+  }
+
   Widget _header(String text) => Padding(
         padding: const EdgeInsets.fromLTRB(16, 24, 16, 4),
         child: Text(
@@ -200,4 +236,35 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
         ),
       );
+}
+
+/// Little preview circle of a theme: background, trim ring, glow dot.
+class _Swatch extends StatelessWidget {
+  final TomePalette p;
+
+  const _Swatch(this.p);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        gradient: RadialGradient(colors: [p.bgTop, p.bgBottom]),
+        border: Border.all(color: p.trim, width: 2.5),
+      ),
+      child: Center(
+        child: Container(
+          width: 12,
+          height: 12,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: p.glow,
+            boxShadow: [BoxShadow(color: p.glow, blurRadius: 8)],
+          ),
+        ),
+      ),
+    );
+  }
 }
