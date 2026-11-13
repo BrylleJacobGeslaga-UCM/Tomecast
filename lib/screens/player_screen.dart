@@ -1,12 +1,16 @@
 import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/book.dart';
+import '../services/app_settings.dart';
+import '../services/live_sync.dart';
 import '../services/playback_service.dart';
 import '../utils/format.dart';
 import '../widgets/bookmarks_sheet.dart';
+import '../widgets/read_along_view.dart';
 
 class PlayerScreen extends StatefulWidget {
   final Book book;
@@ -23,6 +27,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// While dragging the seek bar we show the drag position, not the player's.
   double? _dragMs;
 
+  /// Read-along books open in text mode; the button switches to the cover.
+  late bool _textMode = widget.book.readAlong != null;
+
+  /// Live sync for books with an attached ebook (null until opened).
+  LiveSync? _live;
+  bool _openingLive = false;
+
   /// True once this screen's book is the one loaded in the player.
   bool get _ready => _c.book?.id == widget.book.id;
 
@@ -35,6 +46,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   @override
   void dispose() {
+    _live?.dispose(); // stops syncing; what's synced so far is saved
     // Don't stop the player: audio continues in the background.
     _c.save();
     super.dispose();
@@ -49,6 +61,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
           appBar: AppBar(
             title: Text(widget.book.title, overflow: TextOverflow.ellipsis),
             actions: [
+              IconButton(
+                tooltip: _textMode ? 'Show cover' : 'Show text',
+                icon: Icon(_textMode ? Icons.image_outlined : Icons.menu_book),
+                onPressed: _ready ? _toggleText : null,
+              ),
               IconButton(
                 tooltip: 'Bookmarks',
                 icon: const Icon(Icons.bookmark_border),
@@ -89,10 +106,12 @@ class _PlayerScreenState extends State<PlayerScreen> {
         children: [
           _overallProgress(),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Center(child: _cover()),
-            ),
+            child: _textMode
+                ? _textView()
+                : Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Center(child: _cover()),
+                  ),
           ),
           _fileSelector(),
           _seekBar(),
@@ -102,6 +121,102 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ],
       ),
     );
+  }
+
+  // ---------- Read-along text ----------
+
+  Widget _textView() {
+    final ready = widget.book.readAlong;
+    if (ready != null) return ReadAlongView(sync: ready);
+    final live = _live;
+    if (live != null) return ReadAlongView(sync: live);
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text('Preparing the ebook text…'),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _toggleText() async {
+    if (_textMode) {
+      _live?.stop(); // no syncing while the text is hidden
+      setState(() => _textMode = false);
+      return;
+    }
+    // Storyteller book: already fully synced.
+    if (widget.book.readAlong != null) {
+      setState(() => _textMode = true);
+      return;
+    }
+    // Normal audiobook: needs its ebook, synced live while you listen.
+    if (!await LiveSync.hasEbook(widget.book)) {
+      if (!await _askForEbook()) return;
+    }
+    if (_openingLive) return;
+    setState(() {
+      _textMode = true;
+      _openingLive = true;
+    });
+    try {
+      _live ??= await LiveSync.open(widget.book);
+      _live!.start();
+    } catch (e) {
+      if (mounted) {
+        setState(() => _textMode = false);
+        _snack('Could not read the ebook: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _openingLive = false);
+    }
+  }
+
+  /// Asks for the EPUB of this audiobook. Returns true if one was added.
+  Future<bool> _askForEbook() async {
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.menu_book),
+        title: const Text('Add the ebook'),
+        content: const Text(
+          'Pick the EPUB of this audiobook. Tomecast matches the text to '
+          'the narration a few minutes ahead of where you are listening, '
+          'so the text can follow along.\n\n'
+          'The first time, a speech model (about 140 MB) is downloaded. '
+          'After that everything works offline.\n\n'
+          'The EPUB must be DRM-free.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Choose EPUB'),
+          ),
+        ],
+      ),
+    );
+    if (go != true) return false;
+
+    final files = await FilePicker.pickFiles();
+    if (files.isEmpty) return false;
+    final path = files.first.path;
+    if (path == null || !path.toLowerCase().endsWith('.epub')) {
+      _snack('Please choose an .epub file');
+      return false;
+    }
+    await LiveSync.attachEbook(widget.book, path);
+    return true;
+  }
+
+  void _snack(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   // ---------- Top: whole-book progress ----------
@@ -257,18 +372,22 @@ class _PlayerScreenState extends State<PlayerScreen> {
   // ---------- Skip buttons + play/pause ----------
 
   Widget _controls() {
+    final settings = AppSettings.instance;
+    final short = Duration(seconds: settings.shortSkipSeconds);
+    final long = Duration(seconds: settings.longSkipSeconds);
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
         _SkipButton(
           icon: Icons.fast_rewind,
-          label: '1 m',
-          onTap: () => _c.seekBy(const Duration(minutes: -1)),
+          label: formatSkip(long),
+          onTap: () => _c.seekBy(-long),
         ),
         _SkipButton(
           icon: Icons.fast_rewind,
-          label: '10 s',
-          onTap: () => _c.seekBy(const Duration(seconds: -10)),
+          label: formatSkip(short),
+          onTap: () => _c.seekBy(-short),
         ),
         IconButton.filled(
           iconSize: 48,
@@ -278,13 +397,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
         _SkipButton(
           icon: Icons.fast_forward,
-          label: '10 s',
-          onTap: () => _c.seekBy(const Duration(seconds: 10)),
+          label: formatSkip(short),
+          onTap: () => _c.seekBy(short),
         ),
         _SkipButton(
           icon: Icons.fast_forward,
-          label: '1 m',
-          onTap: () => _c.seekBy(const Duration(minutes: 1)),
+          label: formatSkip(long),
+          onTap: () => _c.seekBy(long),
         ),
       ],
     );
@@ -329,8 +448,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 Text('Sleep timer',
                     style: Theme.of(context).textTheme.titleLarge),
                 const SizedBox(height: 4),
-                const Text('Counts down while playing, '
-                    'fades out in the last 10 seconds.'),
+                Text(AppSettings.instance.shakeToExtend
+                    ? 'Counts down while playing. Shake the phone to reset it.'
+                    : 'Counts down while playing.'),
                 const SizedBox(height: 16),
                 Wrap(
                   spacing: 8,

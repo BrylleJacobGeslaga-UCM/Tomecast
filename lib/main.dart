@@ -3,11 +3,13 @@ import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 
 import 'screens/library_screen.dart';
+import 'services/app_settings.dart';
 import 'services/audio_handler.dart';
 import 'services/playback_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppSettings.instance.load();
 
   // Tells Android this app plays spoken audio: it pauses for calls and
   // when headphones are unplugged, and pauses (instead of ducking) for

@@ -8,6 +8,7 @@ import 'package:sensors_plus/sensors_plus.dart';
 
 import '../models/book.dart';
 import '../models/bookmark.dart';
+import 'app_settings.dart';
 import 'chapter_reader.dart';
 import 'progress_store.dart';
 
@@ -55,6 +56,7 @@ class PlaybackService extends ChangeNotifier {
     if (_book?.id == book.id) return; // already loaded
 
     if (_book != null) {
+      await _flushListening(); // count time for the previous book
       await player.pause();
       await save();
     }
@@ -85,14 +87,23 @@ class PlaybackService extends ChangeNotifier {
     // Remember when playback stopped (pause button, phone call, unplugged
     // headphones, sleep timer...) for smart rewind.
     player.playingStream.listen((playing) {
-      if (!playing) _pausedAt ??= DateTime.now();
+      if (playing) {
+        _listenStart ??= DateTime.now();
+      } else {
+        _pausedAt ??= DateTime.now();
+        _flushListening();
+      }
     });
 
-    // Auto-save every 5 seconds while playing.
+    // Auto-save every 5 seconds while playing, and write listening time
+    // to the stats every minute (so a crash loses at most 1 minute).
     player.positionStream.listen((_) {
-      if (player.playing &&
-          DateTime.now().difference(_lastSave).inSeconds >= 5) {
-        save();
+      if (!player.playing) return;
+      final now = DateTime.now();
+      if (now.difference(_lastSave).inSeconds >= 5) save();
+      final start = _listenStart;
+      if (start != null && now.difference(start).inSeconds >= 60) {
+        _flushListening();
       }
     });
   }
@@ -126,6 +137,7 @@ class PlaybackService extends ChangeNotifier {
 
     if (isLastFile) {
       _book!.finished = true;
+      _book!.finishedAt = DateTime.now();
       await player.pause();
       cancelSleepTimer();
       await save();
@@ -177,7 +189,6 @@ class PlaybackService extends ChangeNotifier {
   // Smart rewind: go back a little after a pause so you don't lose
   // the sentence you were in. Longer pause → bigger rewind.
   DateTime? _pausedAt;
-  bool smartRewindEnabled = true;
 
   Duration _smartRewindAmount(Duration paused) {
     if (paused < const Duration(seconds: 5)) return Duration.zero;
@@ -192,13 +203,14 @@ class PlaybackService extends ChangeNotifier {
     // Book finished and you press play again → start over.
     if (player.processingState == ProcessingState.completed) {
       _book!.finished = false;
+      _book!.finishedAt = null;
       _pausedAt = null;
       await _loadFile(0, Duration.zero);
     }
 
     final pausedAt = _pausedAt;
     _pausedAt = null;
-    if (smartRewindEnabled && pausedAt != null) {
+    if (AppSettings.instance.smartRewind && pausedAt != null) {
       final back = _smartRewindAmount(DateTime.now().difference(pausedAt));
       if (back > Duration.zero) await seekBy(-back);
     }
@@ -380,7 +392,7 @@ class PlaybackService extends ChangeNotifier {
 
     _sleepRemaining = left;
     // Fade out during the last 10 seconds.
-    if (left < _fadeDuration) {
+    if (AppSettings.instance.sleepFadeOut && left < _fadeDuration) {
       player.setVolume(left.inMilliseconds / _fadeDuration.inMilliseconds);
     }
     notifyListeners();
@@ -406,6 +418,7 @@ class PlaybackService extends ChangeNotifier {
   // ---- Shake to reset the sleep timer ----
 
   void _startShakeListener() {
+    if (!AppSettings.instance.shakeToExtend) return;
     _shakeSub ??= userAccelerometerEventStream().listen((e) {
       // userAccelerometer excludes gravity; ~12 m/s² is a deliberate shake.
       final force = math.sqrt(e.x * e.x + e.y * e.y + e.z * e.z);
@@ -441,6 +454,57 @@ class PlaybackService extends ChangeNotifier {
       startSleepTimer(chosen);
       play();
     }
+  }
+
+  // ---------------- Listening stats ----------------
+
+  DateTime? _listenStart;
+
+  /// Writes the time listened since [_listenStart] to the stats table.
+  Future<void> _flushListening() async {
+    final start = _listenStart;
+    final book = _book;
+    final now = DateTime.now();
+    _listenStart = player.playing ? now : null;
+    if (start == null || book == null) return;
+
+    final ms = now.difference(start).inMilliseconds;
+    if (ms < 1000) return;
+    await ProgressStore.instance.addListening(
+      bookId: book.id,
+      startedAt: start,
+      listenedMs: ms,
+      speed: player.speed,
+    );
+  }
+
+  // ---------------- Library actions ----------------
+
+  Future<void> setFinished(Book book, bool finished) async {
+    final isCurrent = _book?.id == book.id;
+    if (isCurrent && finished) await player.pause();
+    book.finished = finished;
+    book.finishedAt = finished ? DateTime.now() : null;
+    await ProgressStore.instance.save(book.toProgress());
+    notifyListeners();
+  }
+
+  /// Back to the start, as if never played. Bookmarks are kept.
+  Future<void> resetProgress(Book book) async {
+    final isCurrent = _book?.id == book.id;
+    if (isCurrent) await player.pause();
+    book
+      ..currentFileIndex = 0
+      ..position = Duration.zero
+      ..finished = false
+      ..finishedAt = null
+      ..lastPlayed = null;
+    await ProgressStore.instance.reset(book.id);
+    if (isCurrent) {
+      _pausedAt = null;
+      await _loadFile(0, Duration.zero);
+    }
+    notifyListeners();
   }
 
   // ---------------- Saving ----------------

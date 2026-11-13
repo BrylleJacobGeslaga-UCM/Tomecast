@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import '../models/book.dart';
 import '../utils/natural_sort.dart';
+import 'read_along.dart';
 
 /// Turns a root folder into a list of books.
 /// Every subfolder of the root that contains audio files = one book.
@@ -35,6 +36,7 @@ class LibraryScanner {
   Future<Book?> _scanBookFolder(Directory dir) async {
     final audio = <String>[];
     final images = <String>[];
+    final epubs = <String>[];
 
     try {
       await for (final entity in dir.list(recursive: true, followLinks: false)) {
@@ -44,10 +46,27 @@ class LibraryScanner {
           audio.add(entity.path);
         } else if (imageExtensions.contains(ext)) {
           images.add(entity.path);
+        } else if (ext == '.epub') {
+          epubs.add(entity.path);
         }
       }
     } on FileSystemException {
       return null; // folder we can't read
+    }
+
+    // A Storyteller-style EPUB (text + synced audio) makes this a
+    // read-along book. Plain ebooks are ignored.
+    epubs.sort(naturalCompare);
+    for (final epub in epubs) {
+      if (ReadAlong.hasMediaOverlays(epub)) {
+        return Book(
+          title: p.basename(dir.path),
+          folderPath: dir.path,
+          files: [], // filled in when the book is opened
+          epubPath: epub,
+          coverPath: _pickCover(images),
+        );
+      }
     }
 
     if (audio.isEmpty) return null;

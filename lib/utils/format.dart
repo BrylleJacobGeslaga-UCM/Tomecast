@@ -14,3 +14,19 @@ String formatSpeed(double speed) {
   if (t.endsWith('0')) t = t.substring(0, t.length - 1);
   return '${t}x';
 }
+
+/// 10 s → "10 s", 60 s → "1 m", 90 s → "1.5 m"
+String formatSkip(Duration d) {
+  final s = d.inSeconds;
+  if (s < 60) return '$s s';
+  final m = s / 60;
+  return m == m.roundToDouble() ? '${m.round()} m' : '${m.toStringAsFixed(1)} m';
+}
+
+/// 3h 25m / 45m / 0m
+String formatHours(Duration d) {
+  final h = d.inHours;
+  final m = d.inMinutes.remainder(60);
+  if (h == 0) return '${m}m';
+  return '${h}h ${m}m';
+}

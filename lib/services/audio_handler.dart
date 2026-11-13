@@ -1,6 +1,7 @@
 import 'package:audio_service/audio_service.dart';
 import 'package:just_audio/just_audio.dart';
 
+import 'app_settings.dart';
 import 'playback_service.dart';
 
 /// Connects PlaybackService to Android's media system:
@@ -77,19 +78,28 @@ class TomecastAudioHandler extends BaseAudioHandler {
   @override
   Future<void> seek(Duration position) => service.seekTo(position);
 
-  @override
-  Future<void> rewind() => service.seekBy(const Duration(seconds: -10));
+  Duration get _shortSkip =>
+      Duration(seconds: AppSettings.instance.shortSkipSeconds);
 
   @override
-  Future<void> fastForward() => service.seekBy(const Duration(seconds: 10));
-
-  // Headset "next/previous" (e.g. double/triple tap on earbuds):
-  // skip 30 seconds instead of jumping a whole file.
-  @override
-  Future<void> skipToNext() => service.seekBy(const Duration(seconds: 30));
+  Future<void> rewind() => service.seekBy(-_shortSkip);
 
   @override
-  Future<void> skipToPrevious() => service.seekBy(const Duration(seconds: -30));
+  Future<void> fastForward() => service.seekBy(_shortSkip);
+
+  // Headset "next/previous" (e.g. double/triple tap on earbuds).
+  // Settings decide: skip 30 seconds, or go to the next chapter/file.
+  @override
+  Future<void> skipToNext() =>
+      AppSettings.instance.headsetAction == HeadsetAction.skip30
+          ? service.seekBy(const Duration(seconds: 30))
+          : service.next();
+
+  @override
+  Future<void> skipToPrevious() =>
+      AppSettings.instance.headsetAction == HeadsetAction.skip30
+          ? service.seekBy(const Duration(seconds: -30))
+          : service.previous();
 
   @override
   Future<void> stop() async {

@@ -6,6 +6,7 @@ class BookProgress {
   final bool finished;
   final double speed;
   final DateTime? lastPlayed;
+  final DateTime? finishedAt;
 
   const BookProgress({
     required this.bookId,
@@ -14,6 +15,7 @@ class BookProgress {
     required this.finished,
     required this.speed,
     this.lastPlayed,
+    this.finishedAt,
   });
 
   Map<String, Object?> toMap() => {
@@ -23,6 +25,7 @@ class BookProgress {
         'finished': finished ? 1 : 0,
         'speed': speed,
         'last_played': lastPlayed?.millisecondsSinceEpoch,
+        'finished_at': finishedAt?.millisecondsSinceEpoch,
       };
 
   factory BookProgress.fromMap(Map<String, Object?> m) => BookProgress(
@@ -34,5 +37,8 @@ class BookProgress {
         lastPlayed: m['last_played'] == null
             ? null
             : DateTime.fromMillisecondsSinceEpoch(m['last_played'] as int),
+        finishedAt: m['finished_at'] == null
+            ? null
+            : DateTime.fromMillisecondsSinceEpoch(m['finished_at'] as int),
       );
 }

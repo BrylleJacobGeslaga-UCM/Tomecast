@@ -7,8 +7,14 @@ import '../models/book.dart';
 class BookTile extends StatelessWidget {
   final Book book;
   final VoidCallback onTap;
+  final VoidCallback? onLongPress;
 
-  const BookTile({super.key, required this.book, required this.onTap});
+  const BookTile({
+    super.key,
+    required this.book,
+    required this.onTap,
+    this.onLongPress,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -16,6 +22,7 @@ class BookTile extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
@@ -59,7 +66,23 @@ class BookTile extends StatelessWidget {
   }
 
   List<Widget> _progressInfo(ThemeData theme) {
+    return [
+      if (book.isReadAlong)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(children: [
+            Icon(Icons.menu_book, size: 16, color: theme.colorScheme.primary),
+            const SizedBox(width: 4),
+            Text('Read-along', style: theme.textTheme.bodySmall),
+          ]),
+        ),
+      ..._statusInfo(theme),
+    ];
+  }
+
+  List<Widget> _statusInfo(ThemeData theme) {
     final count = book.files.length;
+    if (count == 0) return const []; // read-along book not opened yet
     switch (book.status) {
       case BookStatus.newBook:
         return [
