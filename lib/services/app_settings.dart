@@ -47,6 +47,52 @@ class AppSettings extends ChangeNotifier {
   bool get sleepFadeOut => _prefs.getBool('sleep_fade') ?? true;
   set sleepFadeOut(bool v) => _set(() => _prefs.setBool('sleep_fade', v));
 
+  // ---- Sound (applies to every book) ----
+  /// Volume boost in dB, 0 = off.
+  int get boostDb => _prefs.getInt('boost_db') ?? 0;
+  set boostDb(int v) => _set(() => _prefs.setInt('boost_db', v));
+
+  double get pitch => _prefs.getDouble('pitch') ?? 1.0;
+  set pitch(double v) => _set(() => _prefs.setDouble('pitch', v));
+
+  bool get skipSilence => _prefs.getBool('skip_silence') ?? false;
+  set skipSilence(bool v) => _set(() => _prefs.setBool('skip_silence', v));
+
+  bool get eqEnabled => _prefs.getBool('eq_enabled') ?? false;
+  set eqEnabled(bool v) => _set(() => _prefs.setBool('eq_enabled', v));
+
+  /// Gain per equalizer band in dB.
+  List<double> get eqGains => (_prefs.getStringList('eq_gains') ?? [])
+      .map((g) => double.tryParse(g) ?? 0)
+      .toList();
+  set eqGains(List<double> v) => _set(() =>
+      _prefs.setStringList('eq_gains', v.map((g) => g.toString()).toList()));
+
+  // ---- Player ----
+  /// 0 = files, 1 = hours, 2 = percent (tap the progress line to switch).
+  int get positionDisplay => _prefs.getInt('position_display') ?? 0;
+  set positionDisplay(int v) => _set(() => _prefs.setInt('position_display', v));
+
+  /// Show the title tag (ID3 etc.) instead of the file name.
+  bool get useTagTitles => _prefs.getBool('tag_titles') ?? false;
+  set useTagTitles(bool v) => _set(() => _prefs.setBool('tag_titles', v));
+
+  bool get flipToPause => _prefs.getBool('flip_to_pause') ?? false;
+  set flipToPause(bool v) => _set(() => _prefs.setBool('flip_to_pause', v));
+
+  bool get autoNextBook => _prefs.getBool('auto_next_book') ?? false;
+  set autoNextBook(bool v) => _set(() => _prefs.setBool('auto_next_book', v));
+
+  // ---- Per book: skip the start / end of every file ----
+  Duration skipStart(String bookId) =>
+      Duration(seconds: _prefs.getInt('skip_start:$bookId') ?? 0);
+  Duration skipEnd(String bookId) =>
+      Duration(seconds: _prefs.getInt('skip_end:$bookId') ?? 0);
+  void setSkip(String bookId, Duration start, Duration end) => _set(() async {
+        await _prefs.setInt('skip_start:$bookId', start.inSeconds);
+        return _prefs.setInt('skip_end:$bookId', end.inSeconds);
+      });
+
   void _set(Future<bool> Function() write) {
     write();
     notifyListeners();

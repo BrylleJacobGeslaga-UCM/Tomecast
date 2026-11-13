@@ -10,6 +10,8 @@ import '../services/live_sync.dart';
 import '../services/playback_service.dart';
 import '../utils/format.dart';
 import '../widgets/bookmarks_sheet.dart';
+import '../widgets/characters_sheet.dart';
+import '../widgets/sound_sheet.dart';
 import '../widgets/read_along_view.dart';
 
 class PlayerScreen extends StatefulWidget {
@@ -66,19 +68,21 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 icon: Icon(_textMode ? Icons.image_outlined : Icons.menu_book),
                 onPressed: _ready ? _toggleText : null,
               ),
-              IconButton(
-                tooltip: 'Bookmarks',
-                icon: const Icon(Icons.bookmark_border),
-                onPressed: _ready ? _showBookmarksSheet : null,
-              ),
-              _sleepButton(),
-              TextButton(
-                onPressed: _ready ? _showSpeedSheet : null,
-                child: Text(
-                  formatSpeed(_c.speed),
-                  style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.bold),
-                ),
+              PopupMenuButton<String>(
+                enabled: _ready,
+                onSelected: (v) {
+                  if (v == 'skip') _showSkipDialog();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'skip',
+                    child: ListTile(
+                      leading: Icon(Icons.content_cut),
+                      title: Text('Skip intro / outro'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -105,6 +109,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
       child: Column(
         children: [
           _overallProgress(),
+          _toolsRow(),
           Expanded(
             child: _textMode
                 ? _textView()
@@ -121,6 +126,151 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ],
       ),
     );
+  }
+
+  // ---------- Tools row (sleep, sound, speed, repeat, bookmarks, cast) ----------
+
+  Widget _toolsRow() {
+    final theme = Theme.of(context);
+    final repeat = _c.repeatState;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          _sleepButton(),
+          IconButton(
+            tooltip: 'Sound',
+            icon: Icon(
+              Icons.graphic_eq,
+              color: _soundChanged ? theme.colorScheme.primary : null,
+            ),
+            onPressed: _showSoundSheet,
+          ),
+          TextButton(
+            onPressed: _showSpeedSheet,
+            child: Text(
+              formatSpeed(_c.speed),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ),
+          IconButton(
+            tooltip: switch (repeat) {
+              0 => 'A-B repeat: tap to set A',
+              1 => 'Tap to set B',
+              _ => 'Stop repeating',
+            },
+            icon: switch (repeat) {
+              0 => const Icon(Icons.repeat),
+              1 => Text('A–',
+                  style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.primary)),
+              _ => Icon(Icons.repeat_on, color: theme.colorScheme.primary),
+            },
+            onPressed: () {
+              _c.cycleRepeat();
+              if (_c.repeatState == 1) {
+                _snack('A set. Tap again at the end of the part to repeat.');
+              }
+            },
+          ),
+          IconButton(
+            tooltip: 'Bookmarks',
+            icon: const Icon(Icons.bookmark_border),
+            onPressed: _showBookmarksSheet,
+          ),
+          IconButton(
+            tooltip: 'Characters',
+            icon: const Icon(Icons.people_outline),
+            onPressed: _showCharactersSheet,
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool get _soundChanged {
+    final s = AppSettings.instance;
+    return s.boostDb > 0 || s.eqEnabled || s.skipSilence || s.pitch != 1.0;
+  }
+
+  void _showSoundSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => ConstrainedBox(
+        constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.85),
+        child: const SoundSheet(),
+      ),
+    ).whenComplete(() {
+      if (mounted) setState(() {}); // refresh the highlighted icon
+    });
+  }
+
+  void _showCharactersSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.7,
+        child: CharactersSheet(book: widget.book),
+      ),
+    );
+  }
+
+  /// Per-book: skip the same intro/outro at the start/end of every file.
+  Future<void> _showSkipDialog() async {
+    final s = AppSettings.instance;
+    var start = s.skipStart(widget.book.id).inSeconds.toDouble();
+    var end = s.skipEnd(widget.book.id).inSeconds.toDouble();
+
+    final save = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialog) => AlertDialog(
+          title: const Text('Skip intro / outro'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('For this book, skip the same part at the start and '
+                  'end of every file (repeated music, "end of part 3"...).'),
+              const SizedBox(height: 16),
+              Text('Skip start: ${start.round()} s'),
+              Slider(
+                value: start,
+                max: 120,
+                divisions: 120,
+                onChanged: (v) => setDialog(() => start = v),
+              ),
+              Text('Skip end: ${end.round()} s'),
+              Slider(
+                value: end,
+                max: 120,
+                divisions: 120,
+                onChanged: (v) => setDialog(() => end = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (save == true) {
+      s.setSkip(widget.book.id, Duration(seconds: start.round()),
+          Duration(seconds: end.round()));
+    }
   }
 
   // ---------- Read-along text ----------
@@ -227,17 +377,39 @@ class _PlayerScreenState extends State<PlayerScreen> {
       stream: _c.player.positionStream,
       builder: (context, _) {
         final read = _c.filesRead;
-        return Padding(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-          child: Column(
-            children: [
-              LinearProgressIndicator(
-                value: total == 0 ? 0 : read / total,
-                borderRadius: BorderRadius.circular(4),
-              ),
-              const SizedBox(height: 6),
-              Text('Read ${read.toStringAsFixed(1)} of $total files'),
-            ],
+        final bookPos = _c.bookPosition;
+        final bookDur = _c.bookDuration;
+        final hasTimes = bookPos != null && bookDur != null &&
+            bookDur > Duration.zero;
+        final fraction = hasTimes
+            ? bookPos.inMilliseconds / bookDur.inMilliseconds
+            : (total == 0 ? 0.0 : read / total);
+
+        // 0 = files, 1 = hours, 2 = percent (hours/percent need file lengths)
+        final mode = hasTimes ? AppSettings.instance.positionDisplay : 0;
+        final label = switch (mode) {
+          1 => '${formatDuration(bookPos!)} of ${formatDuration(bookDur!)}'
+              ' · ${formatDuration(bookDur! - bookPos!)} left',
+          2 => '${(fraction * 100).toStringAsFixed(1)}% read',
+          _ => 'Read ${read.toStringAsFixed(1)} of $total files',
+        };
+
+        return InkWell(
+          // Tap to switch between files / hours / percent.
+          onTap: () => setState(() => AppSettings.instance.positionDisplay =
+              (AppSettings.instance.positionDisplay + 1) % 3),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: Column(
+              children: [
+                LinearProgressIndicator(
+                  value: fraction.clamp(0.0, 1.0),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                const SizedBox(height: 6),
+                Text(label),
+              ],
+            ),
           ),
         );
       },
@@ -283,7 +455,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 stream: _c.player.positionStream,
                 builder: (context, snap) {
                   final theme = Theme.of(context);
-                  final fileName = p.basename(_c.currentFilePath);
+                  final tag = _c.currentTitleTag;
+                  final fileName =
+                      AppSettings.instance.useTagTitles && tag != null && tag.isNotEmpty
+                          ? tag
+                          : p.basename(_c.currentFilePath);
                   final chapterIndex =
                       _c.chapterIndexAt(snap.data ?? Duration.zero);
 
@@ -597,7 +773,10 @@ class _PlayerScreenState extends State<PlayerScreen> {
         selected: i == _c.fileIndex,
         leading: Text('${i + 1}'),
         title: Text(
-          p.relative(files[i], from: widget.book.folderPath),
+          AppSettings.instance.useTagTitles &&
+                  (_c.titleTagOf(i)?.isNotEmpty ?? false)
+              ? _c.titleTagOf(i)!
+              : p.relative(files[i], from: widget.book.folderPath),
           overflow: TextOverflow.ellipsis,
         ),
         onTap: () {

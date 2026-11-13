@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 
 import '../services/playback_service.dart';
 import '../services/text_sync.dart';
@@ -87,9 +88,10 @@ class _ReadAlongViewState extends State<ReadAlongView> {
     });
   }
 
+  /// Scrolls so the sentence being read sits in the middle of the screen.
   void _scrollToActive({bool force = false}) {
     final chapter = _chapter;
-    if (_active < 0 || chapter == null) return;
+    if (_active < 0 || chapter == null || !_scroll.hasClients) return;
     // You scrolled by hand in the last 5 seconds: don't fight you.
     if (!force &&
         DateTime.now().difference(_lastUserScroll) <
@@ -98,11 +100,36 @@ class _ReadAlongViewState extends State<ReadAlongView> {
     }
     final paragraphs = _sync.chapters[chapter].paragraphs;
     final index = paragraphs.indexWhere((p) => p.sentences.contains(_active));
-    final context = _paragraphKeys[index]?.currentContext;
-    if (context == null) return;
-    Scrollable.ensureVisible(
-      context,
-      alignment: 0.3, // active paragraph about a third from the top
+    if (index < 0) return;
+    final paragraph =
+        _paragraphKeys[index]?.currentContext?.findRenderObject();
+    if (paragraph is! RenderParagraph) return;
+
+    // Where the active sentence starts/ends inside the paragraph's text.
+    var start = 0, end = 0;
+    for (final s in paragraphs[index].sentences) {
+      final length = '${_sync.sentenceText(s)} '.length;
+      if (s == _active) {
+        end = start + length - 1;
+        break;
+      }
+      start += length;
+    }
+    final boxes = paragraph.getBoxesForSelection(
+        TextSelection(baseOffset: start, extentOffset: end));
+    if (boxes.isEmpty) return;
+    final sentenceMiddle = (boxes.first.top + boxes.last.bottom) / 2;
+
+    // Scroll offset that puts the paragraph's top at the top of the view,
+    // then shift so the sentence's middle is in the middle of the view.
+    final paragraphTop =
+        RenderAbstractViewport.of(paragraph).getOffsetToReveal(paragraph, 0).offset;
+    final position = _scroll.position;
+    final target = (paragraphTop + sentenceMiddle - position.viewportDimension / 2)
+        .clamp(position.minScrollExtent, position.maxScrollExtent);
+
+    _scroll.animateTo(
+      target,
       duration: const Duration(milliseconds: 400),
       curve: Curves.easeInOut,
     );
@@ -199,7 +226,7 @@ class _ReadAlongViewState extends State<ReadAlongView> {
       },
       child: SingleChildScrollView(
         controller: _scroll,
-        padding: const EdgeInsets.fromLTRB(20, 8, 20, 120),
+        padding: const EdgeInsets.fromLTRB(20, 8, 20, 400), // room to center the last lines
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -212,9 +239,9 @@ class _ReadAlongViewState extends State<ReadAlongView> {
             ),
             for (var i = 0; i < chapter.paragraphs.length; i++)
               Padding(
-                key: _paragraphKeys.putIfAbsent(i, GlobalKey.new),
                 padding: const EdgeInsets.only(bottom: 16),
                 child: Text.rich(
+                  key: _paragraphKeys.putIfAbsent(i, GlobalKey.new),
                   TextSpan(
                     style: chapter.paragraphs[i].heading
                         ? headingStyle

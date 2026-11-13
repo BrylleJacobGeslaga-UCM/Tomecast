@@ -77,6 +77,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         books[i] = old.first;
       }
     }
+    PlaybackService.instance.library = books; // for "play next book"
     if (!mounted) return;
     setState(() {
       _books = books;

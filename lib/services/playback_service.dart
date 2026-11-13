@@ -10,6 +10,7 @@ import '../models/book.dart';
 import '../models/bookmark.dart';
 import 'app_settings.dart';
 import 'chapter_reader.dart';
+import 'file_info_service.dart';
 import 'progress_store.dart';
 
 /// App-wide player. Lives for the whole app (not just the player screen),
@@ -21,7 +22,12 @@ class PlaybackService extends ChangeNotifier {
   PlaybackService._();
   static final instance = PlaybackService._();
 
-  final AudioPlayer player = AudioPlayer();
+  // Sound effects (volume boost + equalizer) run inside the player.
+  final AndroidLoudnessEnhancer loudness = AndroidLoudnessEnhancer();
+  final AndroidEqualizer equalizer = AndroidEqualizer();
+  late final AudioPlayer player = AudioPlayer(
+    audioPipeline: AudioPipeline(androidAudioEffects: [loudness, equalizer]),
+  );
 
   Book? _book;
   int _fileIndex = 0;
@@ -69,8 +75,15 @@ class PlaybackService extends ChangeNotifier {
     _pausedAt = book.lastPlayed;
     notifyListeners();
 
+    _clearRepeat();
+    _durations = List.filled(book.files.length, null);
+    _titles = List.filled(book.files.length, null);
+    _loadFileInfo(book);
+
     await player.setSpeed(book.speed);
     await _loadFile(_fileIndex, book.position);
+    await applySoundSettings();
+    updateFlipListener();
   }
 
   void _startListening() {
@@ -97,8 +110,10 @@ class PlaybackService extends ChangeNotifier {
 
     // Auto-save every 5 seconds while playing, and write listening time
     // to the stats every minute (so a crash loses at most 1 minute).
-    player.positionStream.listen((_) {
+    player.positionStream.listen((pos) {
       if (!player.playing) return;
+      _checkRepeat(pos);
+      _checkSkipEnd(pos);
       final now = DateTime.now();
       if (now.difference(_lastSave).inSeconds >= 5) save();
       final start = _listenStart;
@@ -115,11 +130,17 @@ class PlaybackService extends ChangeNotifier {
     _changingFile = true;
     _fileIndex = index;
     _chapters = const [];
+    // "Skip intro": files started from the beginning start a bit later.
+    final skipStart = AppSettings.instance.skipStart(book.id);
+    if (position == Duration.zero && skipStart > Duration.zero) {
+      position = skipStart;
+    }
     try {
       final dur = await player.setFilePath(
         book.files[index],
         initialPosition: position,
       );
+      if (dur != null && position >= dur) await player.seek(Duration.zero);
       _error = null;
       _loadChapters(book.files[index]);
       return dur;
@@ -142,6 +163,7 @@ class PlaybackService extends ChangeNotifier {
       cancelSleepTimer();
       await save();
       notifyListeners();
+      await _startNextBook();
       return;
     }
 
@@ -223,7 +245,11 @@ class PlaybackService extends ChangeNotifier {
     await save();
   }
 
-  Future<void> togglePlay() => isPlaying ? pause() : play();
+  /// Play/pause button (screen, notification). Clears "paused by flip".
+  Future<void> togglePlay() {
+    _pausedByFlip = false;
+    return isPlaying ? pause() : play();
+  }
 
   /// Skip forward/back. Crosses into the previous/next file when needed.
   Future<void> seekBy(Duration offset) async {
@@ -304,6 +330,7 @@ class PlaybackService extends ChangeNotifier {
   Future<void> jumpToFile(int index) async {
     if (_book == null) return;
     _pausedAt = null;
+    _clearRepeat();
     await _loadFile(index, Duration.zero);
     await save();
   }
@@ -453,6 +480,192 @@ class PlaybackService extends ChangeNotifier {
       HapticFeedback.mediumImpact();
       startSleepTimer(chosen);
       play();
+    }
+  }
+
+  // ---------------- Sound ----------------
+
+  /// Applies boost / equalizer / pitch / skip silence from the settings.
+  Future<void> applySoundSettings() async {
+    final s = AppSettings.instance;
+    try {
+      await player.setPitch(s.pitch);
+      await player.setSkipSilenceEnabled(s.skipSilence);
+      await loudness.setEnabled(s.boostDb > 0);
+      if (s.boostDb > 0) await loudness.setTargetGain(s.boostDb.toDouble());
+      await equalizer.setEnabled(s.eqEnabled);
+      if (s.eqEnabled) {
+        final params = await equalizer.parameters;
+        final gains = s.eqGains;
+        for (var i = 0; i < params.bands.length && i < gains.length; i++) {
+          await params.bands[i].setGain(
+              gains[i].clamp(params.minDecibels, params.maxDecibels));
+        }
+      }
+    } catch (e) {
+      debugPrint('Sound settings not applied: $e');
+    }
+  }
+
+  // ---------------- File lengths / titles ----------------
+
+  List<Duration?> _durations = const [];
+  List<String?> _titles = const [];
+
+  Future<void> _loadFileInfo(Book book) async {
+    final info = await FileInfoService.get(book.files);
+    if (_book?.id != book.id) return;
+    _durations = [for (final i in info) i?.duration];
+    _titles = [for (final i in info) i?.title];
+    notifyListeners();
+  }
+
+  /// Title tag of the current file, if it has one.
+  String? get currentTitleTag =>
+      _fileIndex < _titles.length ? _titles[_fileIndex] : null;
+
+  String? titleTagOf(int file) => file < _titles.length ? _titles[file] : null;
+
+  /// Total length of the book (null until all file lengths are known).
+  Duration? get bookDuration {
+    if (_durations.isEmpty || _durations.any((d) => d == null || d == Duration.zero)) {
+      return null;
+    }
+    return _durations.fold<Duration>(Duration.zero, (a, b) => a + b!);
+  }
+
+  /// Position in the whole book (null until file lengths are known).
+  Duration? get bookPosition {
+    if (bookDuration == null) return null;
+    var total = Duration.zero;
+    for (var i = 0; i < _fileIndex; i++) {
+      total += _durations[i]!;
+    }
+    return total + player.position;
+  }
+
+  // ---------------- A-B repeat ----------------
+
+  Duration? _repeatA;
+  Duration? _repeatB;
+  int _repeatFile = 0;
+
+  /// 0 = off, 1 = A set (waiting for B), 2 = repeating A→B.
+  int get repeatState => _repeatB != null ? 2 : (_repeatA != null ? 1 : 0);
+  Duration? get repeatA => _repeatA;
+  Duration? get repeatB => _repeatB;
+
+  /// Repeat button: 1st tap sets A, 2nd sets B and starts looping, 3rd stops.
+  void cycleRepeat() {
+    final pos = player.position;
+    if (_repeatA == null) {
+      _repeatA = pos;
+      _repeatFile = _fileIndex;
+    } else if (_repeatB == null) {
+      if (_fileIndex != _repeatFile || pos <= _repeatA! + const Duration(seconds: 1)) {
+        // B must come after A in the same file: start over with A here.
+        _repeatA = pos;
+        _repeatFile = _fileIndex;
+      } else {
+        _repeatB = pos;
+        player.seek(_repeatA!);
+      }
+    } else {
+      _clearRepeat();
+    }
+    notifyListeners();
+  }
+
+  void _clearRepeat() {
+    _repeatA = null;
+    _repeatB = null;
+  }
+
+  void _checkRepeat(Duration pos) {
+    final a = _repeatA, b = _repeatB;
+    if (a != null && b != null && _fileIndex == _repeatFile && pos >= b) {
+      player.seek(a);
+    }
+  }
+
+  // ---------------- Skip outro ----------------
+
+  bool _skippingEnd = false;
+
+  void _checkSkipEnd(Duration pos) {
+    final book = _book;
+    final dur = player.duration;
+    if (book == null || dur == null || _skippingEnd || _changingFile) return;
+    if (_repeatB != null) return; // don't fight A-B repeat
+    final skipEnd = AppSettings.instance.skipEnd(book.id);
+    if (skipEnd == Duration.zero || dur <= skipEnd * 2) return;
+    if (pos >= dur - skipEnd) {
+      _skippingEnd = true;
+      _onFileCompleted().whenComplete(() => _skippingEnd = false);
+    }
+  }
+
+  // ---------------- Flip to pause ----------------
+
+  StreamSubscription<AccelerometerEvent>? _flipSub;
+  DateTime? _faceDownSince;
+  DateTime? _faceUpSince;
+  bool _pausedByFlip = false;
+
+  /// Starts/stops watching the phone's orientation (setting + book loaded).
+  void updateFlipListener() {
+    if (AppSettings.instance.flipToPause && _book != null) {
+      _flipSub ??= accelerometerEventStream(
+        samplingPeriod: SensorInterval.normalInterval,
+      ).listen(_onTilt, onError: (_) {}, cancelOnError: true);
+    } else {
+      _flipSub?.cancel();
+      _flipSub = null;
+      _pausedByFlip = false;
+    }
+  }
+
+  void _onTilt(AccelerometerEvent e) {
+    const hold = Duration(milliseconds: 800);
+    final now = DateTime.now();
+    if (e.z < -8.5) {
+      // Screen facing down
+      _faceUpSince = null;
+      _faceDownSince ??= now;
+      if (isPlaying && now.difference(_faceDownSince!) > hold) {
+        _pausedByFlip = true;
+        pause();
+      }
+    } else if (e.z > 8.5) {
+      // Screen facing up
+      _faceDownSince = null;
+      _faceUpSince ??= now;
+      if (_pausedByFlip && !isPlaying && now.difference(_faceUpSince!) > hold) {
+        _pausedByFlip = false;
+        play();
+      }
+    } else {
+      _faceDownSince = null;
+      _faceUpSince = null;
+    }
+  }
+
+  // ---------------- Next book ----------------
+
+  /// The library's books in display order (set by the library screen).
+  List<Book> library = const [];
+
+  Future<void> _startNextBook() async {
+    final current = _book;
+    if (!AppSettings.instance.autoNextBook || current == null) return;
+    final i = library.indexWhere((b) => b.id == current.id);
+    if (i < 0) return;
+    for (final next in library.skip(i + 1)) {
+      if (next.status != BookStatus.finished && next.isReady) {
+        await openBook(next);
+        await play();
+        return;
+      }
     }
   }
 

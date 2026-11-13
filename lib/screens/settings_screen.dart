@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/app_settings.dart';
 import '../services/folder_access.dart';
+import '../services/playback_service.dart';
 import '../utils/format.dart';
 
 /// Returns true (via Navigator.pop) if the audiobook folder was changed,
@@ -130,6 +131,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 );
                 if (picked != null) setState(() => _s.headsetAction = picked);
               },
+            ),
+
+            SwitchListTile(
+              secondary: const Icon(Icons.screen_rotation_alt),
+              title: const Text('Flip to pause'),
+              subtitle: const Text(
+                  'Turn the phone face down to pause, face up to resume'),
+              value: _s.flipToPause,
+              onChanged: (v) {
+                setState(() => _s.flipToPause = v);
+                PlaybackService.instance.updateFlipListener();
+              },
+            ),
+            SwitchListTile(
+              secondary: const Icon(Icons.queue_play_next),
+              title: const Text('Play next book automatically'),
+              subtitle: const Text(
+                  'When a book ends, start the next unfinished one'),
+              value: _s.autoNextBook,
+              onChanged: (v) => setState(() => _s.autoNextBook = v),
+            ),
+            SwitchListTile(
+              secondary: const Icon(Icons.title),
+              title: const Text('Show title tags'),
+              subtitle: const Text(
+                  'Use the title stored in each file (ID3) instead of the file name'),
+              value: _s.useTagTitles,
+              onChanged: (v) => setState(() => _s.useTagTitles = v),
             ),
 
             _header('Sleep timer'),

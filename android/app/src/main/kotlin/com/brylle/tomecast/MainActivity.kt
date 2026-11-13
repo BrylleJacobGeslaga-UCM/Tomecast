@@ -1,5 +1,6 @@
 package com.brylle.tomecast
 
+import android.media.MediaMetadataRetriever
 import android.os.Handler
 import android.os.Looper
 import com.ryanheise.audioservice.AudioServiceActivity
@@ -16,6 +17,10 @@ class MainActivity : AudioServiceActivity() {
         // "tomecast/audio": decodes audio for live read-along syncing.
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "tomecast/audio")
             .setMethodCallHandler { call, result ->
+                if (call.method == "fileInfo") {
+                    readFileInfo(call.argument<List<String>>("paths")!!, result)
+                    return@setMethodCallHandler
+                }
                 if (call.method != "decodeToWav") {
                     result.notImplemented()
                     return@setMethodCallHandler
@@ -36,5 +41,29 @@ class MainActivity : AudioServiceActivity() {
                     }
                 }.start()
             }
+    }
+
+    /** Length and title tag of each audio file (for hours/percent display). */
+    private fun readFileInfo(paths: List<String>, result: MethodChannel.Result) {
+        val main = Handler(Looper.getMainLooper())
+        Thread {
+            val info = paths.map { path ->
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(path)
+                    mapOf(
+                        "durationMs" to (retriever.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L),
+                        "title" to retriever.extractMetadata(
+                            MediaMetadataRetriever.METADATA_KEY_TITLE),
+                    )
+                } catch (e: Exception) {
+                    mapOf("durationMs" to 0L, "title" to null)
+                } finally {
+                    retriever.release()
+                }
+            }
+            main.post { result.success(info) }
+        }.start()
     }
 }
