@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import '../models/book.dart';
 import '../services/playback_service.dart';
 import '../utils/format.dart';
+import '../widgets/bookmarks_sheet.dart';
 
 class PlayerScreen extends StatefulWidget {
   final Book book;
@@ -48,6 +49,11 @@ class _PlayerScreenState extends State<PlayerScreen> {
           appBar: AppBar(
             title: Text(widget.book.title, overflow: TextOverflow.ellipsis),
             actions: [
+              IconButton(
+                tooltip: 'Bookmarks',
+                icon: const Icon(Icons.bookmark_border),
+                onPressed: _ready ? _showBookmarksSheet : null,
+              ),
               _sleepButton(),
               TextButton(
                 onPressed: _ready ? _showSpeedSheet : null,
@@ -149,26 +155,51 @@ class _PlayerScreenState extends State<PlayerScreen> {
         IconButton(
           iconSize: 32,
           icon: const Icon(Icons.skip_previous),
-          onPressed: _c.previousFile,
+          onPressed: _c.previous,
         ),
         Expanded(
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
             onTap: _showFilesSheet,
             child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    child: Text(
-                      p.basename(_c.currentFilePath),
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall,
-                    ),
-                  ),
-                  const Icon(Icons.expand_more),
-                ],
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              // Rebuilds with the position so the chapter name stays current.
+              child: StreamBuilder<Duration>(
+                stream: _c.player.positionStream,
+                builder: (context, snap) {
+                  final theme = Theme.of(context);
+                  final fileName = p.basename(_c.currentFilePath);
+                  final chapterIndex =
+                      _c.chapterIndexAt(snap.data ?? Duration.zero);
+
+                  return Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              chapterIndex >= 0
+                                  ? _c.chapters[chapterIndex].title
+                                  : fileName,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.titleSmall,
+                            ),
+                            if (chapterIndex >= 0)
+                              Text(
+                                'Chapter ${chapterIndex + 1} of '
+                                '${_c.chapters.length} · $fileName',
+                                overflow: TextOverflow.ellipsis,
+                                style: theme.textTheme.bodySmall,
+                              ),
+                          ],
+                        ),
+                      ),
+                      const Icon(Icons.expand_more),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -176,7 +207,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         IconButton(
           iconSize: 32,
           icon: const Icon(Icons.skip_next),
-          onPressed: _c.isLastFile ? null : _c.nextFile,
+          onPressed: (_c.isLastFile && !_c.hasChapters) ? null : _c.next,
         ),
       ],
     );
@@ -397,38 +428,98 @@ class _PlayerScreenState extends State<PlayerScreen> {
     );
   }
 
+  /// Files list, plus a Chapters tab when the current file has chapters.
   void _showFilesSheet() {
-    final files = widget.book.files;
-    const tileHeight = 56.0;
-    final controller = ScrollController(
-      initialScrollOffset:
-          (_c.fileIndex - 2).clamp(0, files.length).toDouble() * tileHeight,
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        final height = MediaQuery.of(context).size.height * 0.7;
+        if (!_c.hasChapters) {
+          return SizedBox(height: height, child: _filesList(context));
+        }
+        return SizedBox(
+          height: height,
+          child: DefaultTabController(
+            length: 2,
+            child: Column(
+              children: [
+                const TabBar(tabs: [
+                  Tab(text: 'CHAPTERS'),
+                  Tab(text: 'FILES'),
+                ]),
+                Expanded(
+                  child: TabBarView(children: [
+                    _chaptersList(context),
+                    _filesList(context),
+                  ]),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
+  }
 
+  static const _tileHeight = 56.0;
+
+  Widget _filesList(BuildContext sheetContext) {
+    final files = widget.book.files;
+    return ListView.builder(
+      controller: ScrollController(
+        initialScrollOffset:
+            (_c.fileIndex - 2).clamp(0, files.length).toDouble() * _tileHeight,
+      ),
+      itemCount: files.length,
+      itemExtent: _tileHeight,
+      itemBuilder: (context, i) => ListTile(
+        selected: i == _c.fileIndex,
+        leading: Text('${i + 1}'),
+        title: Text(
+          p.relative(files[i], from: widget.book.folderPath),
+          overflow: TextOverflow.ellipsis,
+        ),
+        onTap: () {
+          Navigator.pop(sheetContext);
+          _c.jumpToFile(i);
+        },
+      ),
+    );
+  }
+
+  Widget _chaptersList(BuildContext sheetContext) {
+    final chapters = _c.chapters;
+    final current = _c.chapterIndexAt(_c.player.position);
+    return ListView.builder(
+      controller: ScrollController(
+        initialScrollOffset:
+            (current - 2).clamp(0, chapters.length).toDouble() * _tileHeight,
+      ),
+      itemCount: chapters.length,
+      itemExtent: _tileHeight,
+      itemBuilder: (context, i) => ListTile(
+        selected: i == current,
+        leading: Text('${i + 1}'),
+        title: Text(chapters[i].title, overflow: TextOverflow.ellipsis),
+        trailing: Text(formatDuration(chapters[i].start)),
+        onTap: () {
+          Navigator.pop(sheetContext);
+          _c.seekTo(chapters[i].start);
+        },
+      ),
+    );
+  }
+
+  void _showBookmarksSheet() {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (context) => SizedBox(
         height: MediaQuery.of(context).size.height * 0.7,
-        child: ListView.builder(
-          controller: controller,
-          itemCount: files.length,
-          itemExtent: tileHeight,
-          itemBuilder: (context, i) => ListTile(
-            selected: i == _c.fileIndex,
-            leading: Text('${i + 1}'),
-            title: Text(
-              p.relative(files[i], from: widget.book.folderPath),
-              overflow: TextOverflow.ellipsis,
-            ),
-            onTap: () {
-              Navigator.pop(context);
-              _c.jumpToFile(i);
-            },
-          ),
-        ),
+        child: BookmarksSheet(book: widget.book),
       ),
-    ).whenComplete(controller.dispose);
+    );
   }
 }
 
