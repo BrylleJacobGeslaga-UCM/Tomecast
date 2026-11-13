@@ -87,9 +87,11 @@ class LibraryScanner {
 
   String? _pickCover(List<String> images) {
     if (images.isEmpty) return null;
-    for (final img in images) {
-      final name = p.basenameWithoutExtension(img).toLowerCase();
-      if (preferredCoverNames.contains(name)) return img;
+    // cover.jpg first, then folder.jpg, front.jpg, albumart.jpg
+    for (final wanted in preferredCoverNames) {
+      for (final img in images) {
+        if (p.basenameWithoutExtension(img).toLowerCase() == wanted) return img;
+      }
     }
     images.sort(naturalCompare);
     return images.first;

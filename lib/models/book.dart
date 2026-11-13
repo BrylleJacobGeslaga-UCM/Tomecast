@@ -21,7 +21,7 @@ class Book {
   ReadAlongData? readAlong;
 
   /// cover.jpg / folder.jpg / first image found, if any.
-  final String? coverPath;
+  String? coverPath;
 
   // ---- Progress (saved in the database) ----
   int currentFileIndex;

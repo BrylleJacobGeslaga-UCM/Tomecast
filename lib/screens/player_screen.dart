@@ -8,6 +8,7 @@ import '../models/book.dart';
 import '../services/app_settings.dart';
 import '../services/live_sync.dart';
 import '../services/playback_service.dart';
+import '../services/srt_sync.dart';
 import '../utils/format.dart';
 import '../widgets/bookmarks_sheet.dart';
 import '../widgets/characters_sheet.dart';
@@ -35,6 +36,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
   /// Live sync for books with an attached ebook (null until opened).
   LiveSync? _live;
   bool _openingLive = false;
+
+  /// Subtitles from .srt files next to the audio (null until opened).
+  SrtSync? _srt;
 
   /// True once this screen's book is the one loaded in the player.
   bool get _ready => _c.book?.id == widget.book.id;
@@ -278,6 +282,8 @@ class _PlayerScreenState extends State<PlayerScreen> {
   Widget _textView() {
     final ready = widget.book.readAlong;
     if (ready != null) return ReadAlongView(sync: ready);
+    final srt = _srt;
+    if (srt != null) return ReadAlongView(sync: srt);
     final live = _live;
     if (live != null) return ReadAlongView(sync: live);
     return const Center(
@@ -302,6 +308,14 @@ class _PlayerScreenState extends State<PlayerScreen> {
     if (widget.book.readAlong != null) {
       setState(() => _textMode = true);
       return;
+    }
+    // .srt subtitles next to the audio files: ready to show.
+    if (SrtSync.hasSubtitles(widget.book)) {
+      _srt ??= await SrtSync.load(widget.book);
+      if (_srt != null) {
+        setState(() => _textMode = true);
+        return;
+      }
     }
     // Normal audiobook: needs its ebook, synced live while you listen.
     if (!await LiveSync.hasEbook(widget.book)) {

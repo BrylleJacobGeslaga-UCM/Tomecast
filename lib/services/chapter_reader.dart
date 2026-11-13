@@ -25,11 +25,19 @@ class ChapterReader {
     final cached = _cache[path];
     if (cached != null) return cached;
 
+    // 1. A .cue sheet next to the file wins (works for any audio format).
+    final cue = _readCue(path);
+    if (cue.length > 1) {
+      _cache[path] = cue;
+      return cue;
+    }
+
     final lower = path.toLowerCase();
     final isMp4 = lower.endsWith('.m4b') ||
         lower.endsWith('.m4a') ||
         lower.endsWith('.mp4');
 
+    // 2. Chapters stored inside .m4b / .m4a files.
     List<Chapter> result = const [];
     if (isMp4) {
       try {
@@ -40,6 +48,82 @@ class ChapterReader {
     }
     _cache[path] = result;
     return result;
+  }
+
+  // ---------------- .cue sheets ----------------
+
+  /// Reads chapters from a .cue file in the same folder:
+  ///   "Book.cue" next to "Book.mp3", or any .cue whose FILE line names
+  ///   this audio file.
+  ///
+  ///   FILE "Book.mp3" MP3
+  ///     TRACK 01 AUDIO
+  ///       TITLE "Chapter 1"
+  ///       INDEX 01 00:00:00     (minutes:seconds:frames, 75 frames/second)
+  static List<Chapter> _readCue(String audioPath) {
+    try {
+      final dir = File(audioPath).parent;
+      final name = audioPath.split(Platform.pathSeparator).last;
+      final base = name.contains('.') ? name.substring(0, name.lastIndexOf('.')) : name;
+
+      final cues = dir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.toLowerCase().endsWith('.cue'))
+          .toList();
+      if (cues.isEmpty) return const [];
+
+      // Prefer "same name.cue", then any cue mentioning this file.
+      cues.sort((a, b) {
+        final aSame = a.path.endsWith('$base.cue') ? 0 : 1;
+        final bSame = b.path.endsWith('$base.cue') ? 0 : 1;
+        return aSame - bSame;
+      });
+
+      for (final cueFile in cues) {
+        final lines = cueFile.readAsLinesSync();
+        final chapters = <Chapter>[];
+        // "Book.cue" next to "Book.m4b" counts even if its FILE line names
+        // the original (e.g. Book.wav) it was made for.
+        final sameName = cueFile.path.endsWith('$base.cue');
+        var inThisFile = sameName;
+        String? title;
+        for (final raw in lines) {
+          final line = raw.trim();
+          final upper = line.toUpperCase();
+          if (upper.startsWith('FILE ')) {
+            final fileName = RegExp(r'"([^"]+)"').firstMatch(line)?.group(1);
+            inThisFile = sameName ||
+                fileName == null ||
+                fileName.toLowerCase() == name.toLowerCase();
+            title = null;
+          } else if (!inThisFile) {
+            continue;
+          } else if (upper.startsWith('TRACK ')) {
+            title = null;
+          } else if (upper.startsWith('TITLE ')) {
+            title = RegExp(r'"([^"]*)"').firstMatch(line)?.group(1) ??
+                line.substring(6).trim();
+          } else if (upper.startsWith('INDEX 01 ')) {
+            final m = RegExp(r'(\d+):(\d+):(\d+)').firstMatch(line);
+            if (m == null) continue;
+            final ms = int.parse(m.group(1)!) * 60000 +
+                int.parse(m.group(2)!) * 1000 +
+                int.parse(m.group(3)!) * 1000 ~/ 75;
+            chapters.add(Chapter(
+              (title == null || title.isEmpty)
+                  ? 'Chapter ${chapters.length + 1}'
+                  : title,
+              Duration(milliseconds: ms),
+            ));
+          }
+        }
+        if (chapters.length > 1) return chapters;
+      }
+    } catch (_) {
+      // Unreadable cue: ignore.
+    }
+    return const [];
   }
 
   // ---------------------------------------------------------------------

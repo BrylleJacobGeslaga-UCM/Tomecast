@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as p;
 
 import '../models/book.dart';
 import '../services/app_settings.dart';
@@ -9,6 +10,7 @@ import '../services/playback_service.dart';
 import '../services/progress_store.dart';
 import '../services/read_along.dart';
 import '../widgets/book_tile.dart';
+import '../widgets/cover_search_sheet.dart';
 import '../widgets/mini_player.dart';
 import 'player_screen.dart';
 import 'settings_screen.dart';
@@ -68,12 +70,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
     final playing = PlaybackService.instance.book;
     if (playing != null) {
       final i = books.indexWhere((b) => b.id == playing.id);
-      if (i != -1) books[i] = playing;
+      if (i != -1) {
+        playing.coverPath = books[i].coverPath; // picks up a new cover
+        books[i] = playing;
+      }
     }
     // Read-along books already prepared this session stay ready.
     for (var i = 0; i < books.length; i++) {
       final old = _books.where((b) => b.id == books[i].id && b.isReady);
       if (books[i].isReadAlong && !books[i].isReady && old.isNotEmpty) {
+        old.first.coverPath = books[i].coverPath;
         books[i] = old.first;
       }
     }
@@ -329,6 +335,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 },
               ),
             ListTile(
+              leading: const Icon(Icons.image_search),
+              title: const Text('Find cover online'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _findCover(book);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.info_outline),
               title: const Text('Details'),
               onTap: () {
@@ -340,6 +354,22 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _findCover(Book book) async {
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.85,
+        child: CoverSearchSheet(book: book),
+      ),
+    );
+    if (saved == true) {
+      // A cover.jpg now exists: rescan so every screen uses it.
+      await _scan();
+      _showMessage('Cover saved to ${p.basename(book.folderPath)}/cover.jpg');
+    }
   }
 
   Future<void> _confirmReset(Book book) async {

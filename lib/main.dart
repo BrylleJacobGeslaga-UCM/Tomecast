@@ -6,6 +6,7 @@ import 'screens/library_screen.dart';
 import 'services/app_settings.dart';
 import 'services/audio_handler.dart';
 import 'services/playback_service.dart';
+import 'services/widget_updater.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,6 +28,8 @@ Future<void> main() async {
       androidStopForegroundOnPause: true,
     ),
   );
+
+  WidgetUpdater.start(); // home screen widget
 
   runApp(const TomecastApp());
 }
