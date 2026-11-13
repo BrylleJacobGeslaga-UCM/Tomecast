@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../models/book.dart';
-import '../services/player_controller.dart';
+import '../services/playback_service.dart';
 import '../utils/format.dart';
 
 class PlayerScreen extends StatefulWidget {
@@ -17,20 +17,25 @@ class PlayerScreen extends StatefulWidget {
 }
 
 class _PlayerScreenState extends State<PlayerScreen> {
-  late final PlayerController _c = PlayerController(widget.book);
+  final _c = PlaybackService.instance;
 
   /// While dragging the seek bar we show the drag position, not the player's.
   double? _dragMs;
 
+  /// True once this screen's book is the one loaded in the player.
+  bool get _ready => _c.book?.id == widget.book.id;
+
   @override
   void initState() {
     super.initState();
-    _c.init();
+    // Keeps playing if this book is already loaded; otherwise loads it.
+    _c.openBook(widget.book);
   }
 
   @override
   void dispose() {
-    _c.dispose();
+    // Don't stop the player: audio continues in the background.
+    _c.save();
     super.dispose();
   }
 
@@ -43,8 +48,9 @@ class _PlayerScreenState extends State<PlayerScreen> {
           appBar: AppBar(
             title: Text(widget.book.title, overflow: TextOverflow.ellipsis),
             actions: [
+              _sleepButton(),
               TextButton(
-                onPressed: _c.ready ? _showSpeedSheet : null,
+                onPressed: _ready ? _showSpeedSheet : null,
                 child: Text(
                   formatSpeed(_c.speed),
                   style: const TextStyle(
@@ -60,7 +66,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
   }
 
   Widget _buildBody() {
-    if (_c.error != null) {
+    if (_ready && _c.error != null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -68,7 +74,7 @@ class _PlayerScreenState extends State<PlayerScreen> {
         ),
       );
     }
-    if (!_c.ready) {
+    if (!_ready) {
       return const Center(child: CircularProgressIndicator());
     }
 
@@ -250,6 +256,82 @@ class _PlayerScreenState extends State<PlayerScreen> {
           onTap: () => _c.seekBy(const Duration(minutes: 1)),
         ),
       ],
+    );
+  }
+
+  // ---------- Sleep timer ----------
+
+  Widget _sleepButton() {
+    final theme = Theme.of(context);
+    if (!_c.sleepTimerActive) {
+      return IconButton(
+        tooltip: 'Sleep timer',
+        icon: const Icon(Icons.bedtime_outlined),
+        onPressed: _ready ? _showSleepSheet : null,
+      );
+    }
+    final label = _c.sleepAtEndOfFile
+        ? 'End of file'
+        : formatDuration(_c.sleepRemaining ?? Duration.zero);
+    return TextButton.icon(
+      onPressed: _showSleepSheet,
+      icon: Icon(Icons.bedtime, color: theme.colorScheme.primary),
+      label: Text(label),
+    );
+  }
+
+  void _showSleepSheet() {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        void pick(VoidCallback action) {
+          action();
+          Navigator.pop(context);
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Sleep timer',
+                    style: Theme.of(context).textTheme.titleLarge),
+                const SizedBox(height: 4),
+                const Text('Counts down while playing, '
+                    'fades out in the last 10 seconds.'),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    for (final min in [5, 10, 15, 20, 30, 45, 60, 90])
+                      ActionChip(
+                        label: Text('$min min'),
+                        onPressed: () => pick(() =>
+                            _c.startSleepTimer(Duration(minutes: min))),
+                      ),
+                    ActionChip(
+                      avatar: const Icon(Icons.skip_next, size: 18),
+                      label: const Text('End of file'),
+                      onPressed: () => pick(_c.startSleepAtEndOfFile),
+                    ),
+                  ],
+                ),
+                if (_c.sleepTimerActive) ...[
+                  const SizedBox(height: 16),
+                  TextButton.icon(
+                    icon: const Icon(Icons.close),
+                    label: const Text('Turn off timer'),
+                    onPressed: () => pick(_c.cancelSleepTimer),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

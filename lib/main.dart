@@ -1,8 +1,31 @@
+import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/material.dart';
 
 import 'screens/library_screen.dart';
+import 'services/audio_handler.dart';
+import 'services/playback_service.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Tells Android this app plays spoken audio: it pauses for calls and
+  // when headphones are unplugged, and pauses (instead of ducking) for
+  // navigation voices so you don't miss words.
+  final session = await AudioSession.instance;
+  await session.configure(const AudioSessionConfiguration.speech());
+
+  // Starts the background service behind the notification / lock screen.
+  await AudioService.init(
+    builder: () => TomecastAudioHandler(PlaybackService.instance),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.brylle.tomecast.playback',
+      androidNotificationChannelName: 'Playback',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+    ),
+  );
+
   runApp(const TomecastApp());
 }
 

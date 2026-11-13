@@ -4,9 +4,11 @@ import 'package:permission_handler/permission_handler.dart';
 
 import '../models/book.dart';
 import '../services/library_scanner.dart';
+import '../services/playback_service.dart';
 import '../services/progress_store.dart';
 import '../services/settings_service.dart';
 import '../widgets/book_tile.dart';
+import '../widgets/mini_player.dart';
 import 'player_screen.dart';
 
 class LibraryScreen extends StatefulWidget {
@@ -76,6 +78,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
     for (final book in books) {
       book.applyProgress(progress[book.id]);
     }
+    // Keep the book that's playing as the same object, so the library
+    // and the player always show the same progress.
+    final playing = PlaybackService.instance.book;
+    if (playing != null) {
+      final i = books.indexWhere((b) => b.id == playing.id);
+      if (i != -1) books[i] = playing;
+    }
     if (!mounted) return;
     setState(() {
       _books = books;
@@ -133,6 +142,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
           ),
         ),
         body: _buildBody(),
+        bottomNavigationBar: MiniPlayer(
+          onOpen: () {
+            final book = PlaybackService.instance.book;
+            if (book != null) _openBook(book);
+          },
+        ),
       ),
     );
   }

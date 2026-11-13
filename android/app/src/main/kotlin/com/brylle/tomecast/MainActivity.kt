@@ -1,5 +1,7 @@
 package com.brylle.tomecast
 
-import io.flutter.embedding.android.FlutterActivity
+import com.ryanheise.audioservice.AudioServiceActivity
 
-class MainActivity : FlutterActivity()
+// AudioServiceActivity (instead of FlutterActivity) lets the background
+// audio service and the app UI share the same Flutter engine.
+class MainActivity : AudioServiceActivity()
