@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// The three looks you can pick in Settings → Appearance.
 enum TomeStyle { arcane, parchment, fel }
@@ -111,7 +110,9 @@ extension TomeContext on BuildContext {
 }
 
 /// Fantasy title font (Cinzel) for headings, book titles, buttons.
-TextStyle titleFont(TextStyle? base) => GoogleFonts.cinzel(textStyle: base);
+/// Fonts are bundled in assets/fonts/ (see pubspec.yaml), so they work offline.
+TextStyle titleFont(TextStyle? base) =>
+    (base ?? const TextStyle()).copyWith(fontFamily: 'Cinzel');
 
 /// Builds the whole Material theme for one look.
 ThemeData buildTomeTheme(TomeStyle style) {
@@ -140,26 +141,8 @@ ThemeData buildTomeTheme(TomeStyle style) {
 
   // Body text: EB Garamond (book-like serif). Headings: Cinzel.
   final base = ThemeData(brightness: brightness).textTheme;
-  // Font applied style by style (works with every google_fonts version).
-  TextStyle? g(TextStyle? style) =>
-      style == null ? null : GoogleFonts.ebGaramond(textStyle: style);
-  final body = TextTheme(
-    displayLarge: g(base.displayLarge),
-    displayMedium: g(base.displayMedium),
-    displaySmall: g(base.displaySmall),
-    headlineLarge: g(base.headlineLarge),
-    headlineMedium: g(base.headlineMedium),
-    headlineSmall: g(base.headlineSmall),
-    titleLarge: g(base.titleLarge),
-    titleMedium: g(base.titleMedium),
-    titleSmall: g(base.titleSmall),
-    bodyLarge: g(base.bodyLarge),
-    bodyMedium: g(base.bodyMedium),
-    bodySmall: g(base.bodySmall),
-    labelLarge: g(base.labelLarge),
-    labelMedium: g(base.labelMedium),
-    labelSmall: g(base.labelSmall),
-  ).apply(
+  final body = base.apply(
+    fontFamily: 'EBGaramond',
     bodyColor: p.text,
     displayColor: p.text,
   );
