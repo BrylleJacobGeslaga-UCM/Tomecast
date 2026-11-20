@@ -14,13 +14,14 @@ class ProgressStore {
   Future<Database> get _database async {
     return _db ??= await openDatabase(
       p.join(await getDatabasesPath(), 'audiobooks.db'),
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await _createProgressTable(db);
         await _createBookmarksTable(db);
         await _createListeningTable(db);
         await _createV4Tables(db);
         await _createQuotesTable(db);
+        await _createV6Tables(db);
       },
       // Older installs get the new tables/columns added without losing data.
       onUpgrade: (db, oldVersion, newVersion) async {
@@ -32,6 +33,7 @@ class ProgressStore {
         }
         if (oldVersion < 4) await _createV4Tables(db);
         if (oldVersion < 5) await _createQuotesTable(db);
+        if (oldVersion < 6) await _createV6Tables(db);
       },
     );
   }
@@ -109,6 +111,32 @@ class ProgressStore {
           created_at  INTEGER NOT NULL
         )
       ''');
+
+  /// Collections, ratings and "date added".
+  static Future<void> _createV6Tables(Database db) async {
+    await db.execute('''
+      CREATE TABLE book_meta (
+        book_id  TEXT PRIMARY KEY,
+        added_at INTEGER NOT NULL,
+        rating   INTEGER NOT NULL DEFAULT 0,
+        review   TEXT    NOT NULL DEFAULT ''
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE collections (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT    NOT NULL,
+        created_at INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE collection_books (
+        collection_id INTEGER NOT NULL,
+        book_id       TEXT    NOT NULL,
+        PRIMARY KEY (collection_id, book_id)
+      )
+    ''');
+  }
 
   // ---------------- Progress ----------------
 
@@ -291,6 +319,123 @@ class ProgressStore {
     final db = await _database;
     await db.delete('quotes', where: 'id = ?', whereArgs: [id]);
   }
+
+  // ---------------- Book info: date added, rating, review ----------------
+
+  /// Records books seen for the first time (their "date added").
+  Future<void> ensureAdded(Iterable<String> bookIds) async {
+    final db = await _database;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final batch = db.batch();
+    for (final id in bookIds) {
+      batch.insert('book_meta', {'book_id': id, 'added_at': now},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+    await batch.commit(noResult: true);
+  }
+
+  Future<Map<String, BookMeta>> getBookMeta() async {
+    final db = await _database;
+    final rows = await db.query('book_meta');
+    return {
+      for (final r in rows)
+        r['book_id'] as String: BookMeta(
+          addedAt: DateTime.fromMillisecondsSinceEpoch(r['added_at'] as int),
+          rating: r['rating'] as int,
+          review: r['review'] as String,
+        ),
+    };
+  }
+
+  Future<void> setRating(String bookId, int stars, String review) async {
+    final db = await _database;
+    await ensureAdded([bookId]);
+    await db.update('book_meta', {'rating': stars, 'review': review},
+        where: 'book_id = ?', whereArgs: [bookId]);
+  }
+
+  // ---------------- Collections ----------------
+
+  Future<List<BookCollection>> getCollections() async {
+    final db = await _database;
+    final rows = await db.query('collections', orderBy: 'created_at');
+    return [
+      for (final r in rows) BookCollection(r['id'] as int, r['name'] as String),
+    ];
+  }
+
+  Future<int> createCollection(String name) async {
+    final db = await _database;
+    return db.insert('collections', {
+      'name': name,
+      'created_at': DateTime.now().millisecondsSinceEpoch,
+    });
+  }
+
+  Future<void> renameCollection(int id, String name) async {
+    final db = await _database;
+    await db.update('collections', {'name': name}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> deleteCollection(int id) async {
+    final db = await _database;
+    await db.delete('collection_books', where: 'collection_id = ?', whereArgs: [id]);
+    await db.delete('collections', where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// book id → ids of the collections it's in.
+  Future<Map<String, Set<int>>> getMemberships() async {
+    final db = await _database;
+    final rows = await db.query('collection_books');
+    final result = <String, Set<int>>{};
+    for (final r in rows) {
+      result.putIfAbsent(r['book_id'] as String, () => {}).add(r['collection_id'] as int);
+    }
+    return result;
+  }
+
+  Future<void> setInCollection(int collectionId, String bookId, bool inside) async {
+    final db = await _database;
+    if (inside) {
+      await db.insert('collection_books',
+          {'collection_id': collectionId, 'book_id': bookId},
+          conflictAlgorithm: ConflictAlgorithm.ignore);
+    } else {
+      await db.delete('collection_books',
+          where: 'collection_id = ? AND book_id = ?', whereArgs: [collectionId, bookId]);
+    }
+  }
+
+  /// Known lengths of files (from the player's cache), ignoring file size.
+  Future<Map<String, Duration>> getKnownDurations(List<String> paths) async {
+    final db = await _database;
+    final result = <String, Duration>{};
+    for (var i = 0; i < paths.length; i += 500) {
+      final batch =
+          paths.sublist(i, i + 500 < paths.length ? i + 500 : paths.length);
+      final rows = await db.query('file_info',
+          columns: ['path', 'duration_ms'],
+          where: 'path IN (${List.filled(batch.length, '?').join(',')})',
+          whereArgs: batch);
+      for (final r in rows) {
+        result[r['path'] as String] = Duration(milliseconds: r['duration_ms'] as int);
+      }
+    }
+    return result;
+  }
+}
+
+class BookMeta {
+  final DateTime addedAt;
+  final int rating; // 0 = not rated, 1-5
+  final String review;
+  const BookMeta({required this.addedAt, this.rating = 0, this.review = ''});
+}
+
+class BookCollection {
+  final int id;
+  final String name;
+  const BookCollection(this.id, this.name);
 }
 
 class Quote {

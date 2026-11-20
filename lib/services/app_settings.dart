@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../theme/tome_theme.dart';
+import '../utils/book_sort.dart';
 
 /// What headset / earbud next & previous buttons do.
 enum HeadsetAction { skip30, chapterOrFile }
@@ -27,6 +28,22 @@ class AppSettings extends ChangeNotifier {
   /// Bookshelf grid (true) or list (false).
   bool get shelfLayout => _prefs.getBool('shelf_layout') ?? true;
   set shelfLayout(bool v) => _set(() => _prefs.setBool('shelf_layout', v));
+
+  // ---- Library: sort + selected collection ----
+  BookSort get sortBy => BookSort.values.firstWhere(
+        (s) => s.name == _prefs.getString('sort_by'),
+        orElse: () => BookSort.title,
+      );
+  bool get sortAscending => _prefs.getBool('sort_asc') ?? true;
+  void setSort(BookSort sort, bool ascending) => _set(() async {
+        await _prefs.setString('sort_by', sort.name);
+        return _prefs.setBool('sort_asc', ascending);
+      });
+
+  /// Collection shown in the library (null = all books).
+  int? get selectedCollection => _prefs.getInt('collection');
+  set selectedCollection(int? id) => _set(() =>
+      id == null ? _prefs.remove('collection') : _prefs.setInt('collection', id));
 
   // ---- Library ----
   String? get rootFolder => _prefs.getString('root_folder');

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/book.dart';
 import '../theme/ornaments.dart';
 import '../theme/tome_theme.dart';
+import 'library_extras.dart';
 
 /// Books standing on shelves, three per shelf.
 class Bookshelf extends StatelessWidget {
@@ -151,6 +152,22 @@ class _ShelfBook extends StatelessWidget {
                 Positioned(right: 4, top: 4, child: _Seal(icon: Icons.check, color: p.glow)),
               if (book.isReadAlong)
                 Positioned(left: 4, top: 4, child: _Seal(icon: Icons.menu_book, color: p.trim)),
+              if (book.rating > 0)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 6,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: p.bgBottom.withValues(alpha: 0.8),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: StarRating(stars: book.rating, size: 12),
+                    ),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 6),

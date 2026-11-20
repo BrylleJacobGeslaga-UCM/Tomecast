@@ -11,11 +11,13 @@ import '../services/live_sync.dart';
 import '../services/playback_service.dart';
 import '../services/progress_store.dart';
 import '../services/read_along.dart';
+import '../utils/book_sort.dart';
 import '../theme/ornaments.dart';
 import '../theme/tome_theme.dart';
 import '../widgets/book_tile.dart';
 import '../widgets/bookshelf.dart';
 import '../widgets/cover_search_sheet.dart';
+import '../widgets/library_extras.dart';
 import '../widgets/mini_player.dart';
 import 'player_screen.dart';
 import 'settings_screen.dart';
@@ -32,6 +34,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final _scanner = LibraryScanner();
 
   String? _rootFolder;
+
+  // Collections (chips above the shelves)
+  List<BookCollection> _collections = [];
 
   // Search
   bool _searching = false;
@@ -97,12 +102,41 @@ class _LibraryScreenState extends State<LibraryScreen> {
         books[i] = old.first;
       }
     }
+    await _loadLibraryInfo(books);
     PlaybackService.instance.library = books; // for "play next book"
     if (!mounted) return;
     setState(() {
       _books = books;
       _loading = false;
     });
+  }
+
+  /// Rating, date added, collections and known length for every book.
+  Future<void> _loadLibraryInfo(List<Book> books) async {
+    final store = ProgressStore.instance;
+    await store.ensureAdded(books.map((b) => b.id));
+    final meta = await store.getBookMeta();
+    final memberships = await store.getMemberships();
+    final durations =
+        await store.getKnownDurations([for (final b in books) ...b.files]);
+    _collections = await store.getCollections();
+    // A remembered collection that was deleted: back to all books.
+    final selected = AppSettings.instance.selectedCollection;
+    if (selected != null && !_collections.any((c) => c.id == selected)) {
+      AppSettings.instance.selectedCollection = null;
+    }
+
+    for (final b in books) {
+      final m = meta[b.id];
+      b.rating = m?.rating ?? 0;
+      b.review = m?.review ?? '';
+      b.addedAt = m?.addedAt;
+      b.collectionIds = memberships[b.id] ?? {};
+      final lengths = [for (final f in b.files) durations[f]];
+      b.knownLength = lengths.isNotEmpty && lengths.every((d) => d != null && d > Duration.zero)
+          ? lengths.fold<Duration>(Duration.zero, (a, d) => a + d!)
+          : null;
+    }
   }
 
   void _showMessage(String msg) {
@@ -146,6 +180,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
               onPressed: _rootFolder == null
                   ? null
                   : () => setState(() => _searching = true),
+            ),
+            IconButton(
+              tooltip: 'Sort',
+              icon: const Icon(Icons.sort),
+              onPressed: _rootFolder == null ? null : _showSortSheet,
             ),
             IconButton(
               tooltip: 'Rescan',
@@ -221,15 +260,29 @@ class _LibraryScreenState extends State<LibraryScreen> {
       );
     }
 
-    return TabBarView(
+    final selected = AppSettings.instance.selectedCollection;
+    return Column(
       children: [
-        _bookList(_filter(_books),
-            header: _query.isEmpty ? _continueCard() : null),
-        _bookList(_filter(
-            _books.where((b) => b.status == BookStatus.newBook).toList())),
-        _bookList(_filter(_startedBooks())),
-        _bookList(_filter(
-            _books.where((b) => b.status == BookStatus.finished).toList())),
+        CollectionChips(
+          collections: _collections,
+          selected: selected,
+          onSelected: (id) => setState(() => AppSettings.instance.selectedCollection = id),
+          onCreate: _createCollection,
+          onEdit: _editCollection,
+        ),
+        Expanded(
+          child: TabBarView(
+            children: [
+              _bookList(_visible(_books),
+                  header: _query.isEmpty && selected == null ? _continueCard() : null),
+              _bookList(_visible(
+                  _books.where((b) => b.status == BookStatus.newBook).toList())),
+              _bookList(_visible(_startedBooks())),
+              _bookList(_visible(
+                  _books.where((b) => b.status == BookStatus.finished).toList())),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -316,14 +369,22 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (!mounted) return;
     showModalBottomSheet(
       context: context,
+      // Can be taller than the default half screen, and scrolls if needed
+      // (long menus, big font sizes).
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.85),
       builder: (sheetContext) => SafeArea(
-        child: Column(
+        child: SingleChildScrollView(
+         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
               title: Text(book.title,
                   style: Theme.of(sheetContext).textTheme.titleMedium),
-              subtitle: Text('${book.files.length} files'),
+              subtitle: Text(book.files.length == 1
+                  ? '1 file'
+                  : '${book.files.length} files'),
             ),
             const Divider(height: 1),
             if (book.status != BookStatus.finished)
@@ -384,6 +445,28 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 },
               ),
             ListTile(
+              leading: const Icon(Icons.star_outline),
+              title: Text(book.rating == 0 ? 'Rate' : 'Rating: ${'★' * book.rating}'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _rate(book);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.collections_bookmark_outlined),
+              title: const Text('Collections'),
+              subtitle: book.collectionIds.isEmpty
+                  ? null
+                  : Text(_collections
+                      .where((c) => book.collectionIds.contains(c.id))
+                      .map((c) => c.name)
+                      .join(', ')),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _pickCollections(book);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.image_search),
               title: const Text('Find cover online'),
               onTap: () {
@@ -400,6 +483,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               },
             ),
           ],
+        ),
         ),
       ),
     );
@@ -513,6 +597,102 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _searching = false;
       _query = '';
     });
+  }
+
+  /// Search → collection → sort, applied to every tab.
+  List<Book> _visible(List<Book> books) {
+    var list = _filter(books);
+    final collection = AppSettings.instance.selectedCollection;
+    if (collection != null) {
+      list = list.where((b) => b.collectionIds.contains(collection)).toList();
+    }
+    final s = AppSettings.instance;
+    return sortBooks(list, s.sortBy, ascending: s.sortAscending);
+  }
+
+  // ---------------- Sort ----------------
+
+  Future<void> _showSortSheet() async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.85),
+      builder: (_) => const SortSheet(),
+    );
+    if (mounted) setState(() {});
+  }
+
+  // ---------------- Collections ----------------
+
+  Future<void> _createCollection({Book? addBook}) async {
+    final name = await askName(context, title: 'New collection');
+    if (name == null) return;
+    final id = await ProgressStore.instance.createCollection(name);
+    if (addBook != null) {
+      await ProgressStore.instance.setInCollection(id, addBook.id, true);
+      addBook.collectionIds.add(id);
+    }
+    _collections = await ProgressStore.instance.getCollections();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _editCollection(BookCollection c) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (sheet) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(title: Text(c.name, style: Theme.of(sheet).textTheme.titleMedium)),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.edit),
+            title: const Text('Rename'),
+            onTap: () => Navigator.pop(sheet, 'rename'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline),
+            title: const Text('Delete collection'),
+            subtitle: const Text('The books themselves are not deleted'),
+            onTap: () => Navigator.pop(sheet, 'delete'),
+          ),
+        ]),
+      ),
+    );
+    if (action == 'rename') {
+      final name = await askName(context, title: 'Rename collection', initial: c.name);
+      if (name == null) return;
+      await ProgressStore.instance.renameCollection(c.id, name);
+    } else if (action == 'delete') {
+      await ProgressStore.instance.deleteCollection(c.id);
+      for (final b in _books) {
+        b.collectionIds.remove(c.id);
+      }
+      if (AppSettings.instance.selectedCollection == c.id) {
+        AppSettings.instance.selectedCollection = null;
+      }
+    } else {
+      return;
+    }
+    _collections = await ProgressStore.instance.getCollections();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _pickCollections(Book book) async {
+    await showModalBottomSheet(
+      context: context,
+      builder: (_) => BookCollectionsSheet(
+        book: book,
+        collections: _collections,
+        onCreate: () => _createCollection(addBook: book),
+      ),
+    );
+    _collections = await ProgressStore.instance.getCollections();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _rate(Book book) async {
+    final changed = await showRatingDialog(context, book);
+    if (changed && mounted) setState(() {});
   }
 
   /// Books whose title contains every word typed (any order, any case).

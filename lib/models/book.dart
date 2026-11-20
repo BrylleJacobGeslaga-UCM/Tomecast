@@ -31,6 +31,15 @@ class Book {
   DateTime? lastPlayed;
   DateTime? finishedAt;
 
+  // ---- Library info (rating, collections, date added, length) ----
+  int rating = 0; // 0 = not rated, 1-5
+  String review = '';
+  DateTime? addedAt;
+  Set<int> collectionIds = {};
+
+  /// Total length if every file's length is known (after it's been opened).
+  Duration? knownLength;
+
   Book({
     required this.title,
     required this.folderPath,

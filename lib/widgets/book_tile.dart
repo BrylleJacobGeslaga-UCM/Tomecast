@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/book.dart';
 import '../theme/ornaments.dart';
+import 'library_extras.dart';
 
 class BookTile extends StatelessWidget {
   final Book book;
@@ -78,6 +79,11 @@ class BookTile extends StatelessWidget {
           ]),
         ),
       ..._statusInfo(theme),
+      if (book.rating > 0)
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: StarRating(stars: book.rating, size: 14),
+        ),
     ];
   }
 
