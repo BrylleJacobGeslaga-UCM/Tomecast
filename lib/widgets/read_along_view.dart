@@ -3,19 +3,25 @@ import 'dart:async';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
 
 import '../services/playback_service.dart';
 import '../services/text_sync.dart';
 import '../theme/tome_theme.dart';
+import 'quotes.dart';
 
 /// Shows the book's text and highlights the sentence being read.
-/// Scrolls along with the narration; tap any sentence to jump there.
+/// Scrolls along with the narration; tap any sentence to jump there,
+/// long-press one to save it as a quote.
 ///
 /// Works for both ready-made Storyteller EPUBs and live-synced ebooks.
 class ReadAlongView extends StatefulWidget {
   final TextSync sync;
 
-  const ReadAlongView({super.key, required this.sync});
+  /// Called after a quote is saved (e.g. to offer "View quotes").
+  final VoidCallback? onQuoteSaved;
+
+  const ReadAlongView({super.key, required this.sync, this.onQuoteSaved});
 
   @override
   State<ReadAlongView> createState() => _ReadAlongViewState();
@@ -136,6 +142,29 @@ class _ReadAlongViewState extends State<ReadAlongView> {
     );
   }
 
+  /// Finds the sentence under the finger and opens "Save quote".
+  Future<void> _saveQuoteAt(int chapterIndex, int paragraphIndex, Offset local) async {
+    final paragraph = _paragraphKeys[paragraphIndex]?.currentContext?.findRenderObject();
+    if (paragraph is! RenderParagraph) return;
+    final charIndex = paragraph.getPositionForOffset(local).offset;
+
+    final sentences = _sync.chapters[chapterIndex].paragraphs[paragraphIndex].sentences;
+    var start = 0;
+    var sentence = sentences.last;
+    for (final s in sentences) {
+      final length = '${_sync.sentenceText(s)} '.length;
+      if (charIndex < start + length) {
+        sentence = s;
+        break;
+      }
+      start += length;
+    }
+
+    HapticFeedback.mediumImpact();
+    final saved = await showSaveQuoteSheet(context, sync: _sync, sentence: sentence);
+    if (saved) widget.onQuoteSaved?.call();
+  }
+
   TapGestureRecognizer _tapFor(int sentence) {
     return _taps.putIfAbsent(sentence, () {
       return TapGestureRecognizer()
@@ -241,7 +270,11 @@ class _ReadAlongViewState extends State<ReadAlongView> {
             for (var i = 0; i < chapter.paragraphs.length; i++)
               Padding(
                 padding: const EdgeInsets.only(bottom: 16),
-                child: Text.rich(
+                child: GestureDetector(
+                  // Long-press a sentence → save it as a quote.
+                  onLongPressStart: (d) =>
+                      _saveQuoteAt(chapterIndex, i, d.localPosition),
+                  child: Text.rich(
                   key: _paragraphKeys.putIfAbsent(i, GlobalKey.new),
                   TextSpan(
                     style: chapter.paragraphs[i].heading
@@ -256,6 +289,7 @@ class _ReadAlongViewState extends State<ReadAlongView> {
                         ),
                     ],
                   ),
+                ),
                 ),
               ),
           ],

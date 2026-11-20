@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:permission_handler/permission_handler.dart';
+
 import '../models/book.dart';
 import '../services/app_settings.dart';
 import '../services/folder_access.dart';
@@ -10,6 +12,7 @@ import '../services/playback_service.dart';
 import '../services/progress_store.dart';
 import '../services/read_along.dart';
 import '../theme/ornaments.dart';
+import '../theme/tome_theme.dart';
 import '../widgets/book_tile.dart';
 import '../widgets/bookshelf.dart';
 import '../widgets/cover_search_sheet.dart';
@@ -29,6 +32,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final _scanner = LibraryScanner();
 
   String? _rootFolder;
+
+  // Search
+  bool _searching = false;
+  String _query = '';
+  final _searchController = TextEditingController();
   List<Book> _books = [];
   bool _loading = true;
 
@@ -39,6 +47,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   Future<void> _init() async {
+    // Android 13+: needed for the playback notification / lock-screen controls.
+    if (await Permission.notification.isDenied) {
+      await Permission.notification.request();
+    }
     _rootFolder = AppSettings.instance.rootFolder;
     if (_rootFolder != null && await FolderAccess.ensurePermission()) {
       await _scan();
@@ -98,16 +110,43 @@ class _LibraryScreenState extends State<LibraryScreen> {
   }
 
   @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return TomeBackground(
+    // Back button closes the search first.
+    return PopScope(
+      canPop: !_searching,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop && _searching) _closeSearch();
+      },
+      child: TomeBackground(
       child: DefaultTabController(
       length: 4,
       child: Scaffold(
         backgroundColor: Colors.transparent,
         appBar: AppBar(
-          title: const Text('LIBRARY'),
+          title: _searching ? _searchField() : const Text('LIBRARY'),
           centerTitle: false,
-          actions: [
+          actions: _searching
+              ? [
+                  IconButton(
+                    tooltip: 'Close search',
+                    icon: const Icon(Icons.close),
+                    onPressed: _closeSearch,
+                  ),
+                ]
+              : [
+            IconButton(
+              tooltip: 'Search',
+              icon: const Icon(Icons.search),
+              onPressed: _rootFolder == null
+                  ? null
+                  : () => setState(() => _searching = true),
+            ),
             IconButton(
               tooltip: 'Rescan',
               icon: const Icon(Icons.refresh),
@@ -147,6 +186,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       ),
       ),
+      ),
     );
   }
 
@@ -183,10 +223,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
     return TabBarView(
       children: [
-        _bookList(_books, header: _continueCard()),
-        _bookList(_books.where((b) => b.status == BookStatus.newBook).toList()),
-        _bookList(_startedBooks()),
-        _bookList(_books.where((b) => b.status == BookStatus.finished).toList()),
+        _bookList(_filter(_books),
+            header: _query.isEmpty ? _continueCard() : null),
+        _bookList(_filter(
+            _books.where((b) => b.status == BookStatus.newBook).toList())),
+        _bookList(_filter(_startedBooks())),
+        _bookList(_filter(
+            _books.where((b) => b.status == BookStatus.finished).toList())),
       ],
     );
   }
@@ -444,6 +487,45 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       );
 
+  // ---------------- Search ----------------
+
+  Widget _searchField() {
+    final p = context.tome;
+    return TextField(
+      controller: _searchController,
+      autofocus: true,
+      style: TextStyle(color: p.text, fontSize: 18),
+      cursorColor: p.glow,
+      decoration: InputDecoration(
+        hintText: 'Search your tomes…',
+        hintStyle: TextStyle(color: p.textMuted),
+        border: InputBorder.none,
+        enabledBorder: InputBorder.none,
+        focusedBorder: InputBorder.none,
+      ),
+      onChanged: (v) => setState(() => _query = v.trim()),
+    );
+  }
+
+  void _closeSearch() {
+    _searchController.clear();
+    setState(() {
+      _searching = false;
+      _query = '';
+    });
+  }
+
+  /// Books whose title contains every word typed (any order, any case).
+  /// "dragon day" finds "5. Day of the Dragon".
+  List<Book> _filter(List<Book> books) {
+    if (_query.isEmpty) return books;
+    final words = _query.toLowerCase().split(RegExp(r'\s+'));
+    return books.where((b) {
+      final title = b.title.toLowerCase();
+      return words.every(title.contains);
+    }).toList();
+  }
+
   /// Most recently played unfinished book, shown above the shelves.
   Widget? _continueCard() {
     final started = _startedBooks();
@@ -453,7 +535,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Widget _bookList(List<Book> books, {Widget? header}) {
     if (books.isEmpty) {
-      return const Center(child: Text('No books here yet'));
+      return Center(
+        child: Text(_query.isEmpty
+            ? 'No books here yet'
+            : 'No books match "$_query"'),
+      );
     }
     if (AppSettings.instance.shelfLayout) {
       return RefreshIndicator(

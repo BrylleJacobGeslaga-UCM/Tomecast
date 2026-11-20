@@ -14,12 +14,13 @@ class ProgressStore {
   Future<Database> get _database async {
     return _db ??= await openDatabase(
       p.join(await getDatabasesPath(), 'audiobooks.db'),
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await _createProgressTable(db);
         await _createBookmarksTable(db);
         await _createListeningTable(db);
         await _createV4Tables(db);
+        await _createQuotesTable(db);
       },
       // Older installs get the new tables/columns added without losing data.
       onUpgrade: (db, oldVersion, newVersion) async {
@@ -30,6 +31,7 @@ class ProgressStore {
           await _createListeningTable(db);
         }
         if (oldVersion < 4) await _createV4Tables(db);
+        if (oldVersion < 5) await _createQuotesTable(db);
       },
     );
   }
@@ -94,6 +96,19 @@ class ProgressStore {
       )
     ''');
   }
+
+  /// Quotes saved from the read-along text.
+  static Future<void> _createQuotesTable(Database db) => db.execute('''
+        CREATE TABLE quotes (
+          id          INTEGER PRIMARY KEY AUTOINCREMENT,
+          book_id     TEXT    NOT NULL,
+          text        TEXT    NOT NULL,
+          note        TEXT    NOT NULL DEFAULT '',
+          file_index  INTEGER,
+          position_ms INTEGER,
+          created_at  INTEGER NOT NULL
+        )
+      ''');
 
   // ---------------- Progress ----------------
 
@@ -252,6 +267,72 @@ class ProgressStore {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
+
+  // ---------------- Quotes ----------------
+
+  Future<List<Quote>> getQuotes(String bookId) async {
+    final db = await _database;
+    final rows = await db.query('quotes',
+        where: 'book_id = ?', whereArgs: [bookId], orderBy: 'created_at DESC');
+    return rows.map(Quote.fromMap).toList();
+  }
+
+  Future<void> saveQuote(Quote q) async {
+    final db = await _database;
+    await db.insert('quotes', q.toMap());
+  }
+
+  Future<void> updateQuoteNote(int id, String note) async {
+    final db = await _database;
+    await db.update('quotes', {'note': note}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> deleteQuote(int id) async {
+    final db = await _database;
+    await db.delete('quotes', where: 'id = ?', whereArgs: [id]);
+  }
+}
+
+class Quote {
+  final int? id;
+  final String bookId;
+  final String text;
+  final String note;
+  final int? fileIndex; // where it's spoken (null if not synced)
+  final Duration? position;
+  final DateTime createdAt;
+
+  const Quote({
+    this.id,
+    required this.bookId,
+    required this.text,
+    this.note = '',
+    this.fileIndex,
+    this.position,
+    required this.createdAt,
+  });
+
+  Map<String, Object?> toMap() => {
+        if (id != null) 'id': id,
+        'book_id': bookId,
+        'text': text,
+        'note': note,
+        'file_index': fileIndex,
+        'position_ms': position?.inMilliseconds,
+        'created_at': createdAt.millisecondsSinceEpoch,
+      };
+
+  factory Quote.fromMap(Map<String, Object?> m) => Quote(
+        id: m['id'] as int,
+        bookId: m['book_id'] as String,
+        text: m['text'] as String,
+        note: m['note'] as String,
+        fileIndex: m['file_index'] as int?,
+        position: m['position_ms'] == null
+            ? null
+            : Duration(milliseconds: m['position_ms'] as int),
+        createdAt: DateTime.fromMillisecondsSinceEpoch(m['created_at'] as int),
+      );
 }
 
 class BookCharacter {

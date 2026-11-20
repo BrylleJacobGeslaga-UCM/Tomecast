@@ -14,6 +14,7 @@ import '../theme/tome_theme.dart';
 import '../utils/format.dart';
 import '../widgets/bookmarks_sheet.dart';
 import '../widgets/characters_sheet.dart';
+import '../widgets/quotes.dart';
 import '../widgets/sound_sheet.dart';
 import '../widgets/read_along_view.dart';
 
@@ -80,8 +81,17 @@ class _PlayerScreenState extends State<PlayerScreen> {
                 enabled: _ready,
                 onSelected: (v) {
                   if (v == 'skip') _showSkipDialog();
+                  if (v == 'quotes') _showQuotesSheet();
                 },
                 itemBuilder: (_) => const [
+                  PopupMenuItem(
+                    value: 'quotes',
+                    child: ListTile(
+                      leading: Icon(Icons.format_quote),
+                      title: Text('Saved quotes'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
                   PopupMenuItem(
                     value: 'skip',
                     child: ListTile(
@@ -219,6 +229,24 @@ class _PlayerScreenState extends State<PlayerScreen> {
     });
   }
 
+  void _quoteSaved() {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: const Text('Quote saved'),
+      action: SnackBarAction(label: 'VIEW', onPressed: _showQuotesSheet),
+    ));
+  }
+
+  void _showQuotesSheet() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.75,
+        child: QuotesSheet(book: widget.book),
+      ),
+    );
+  }
+
   void _showCharactersSheet() {
     showModalBottomSheet(
       context: context,
@@ -287,11 +315,13 @@ class _PlayerScreenState extends State<PlayerScreen> {
 
   Widget _textView() {
     final ready = widget.book.readAlong;
-    if (ready != null) return ReadAlongView(sync: ready);
+    if (ready != null) {
+      return ReadAlongView(sync: ready, onQuoteSaved: _quoteSaved);
+    }
     final srt = _srt;
-    if (srt != null) return ReadAlongView(sync: srt);
+    if (srt != null) return ReadAlongView(sync: srt, onQuoteSaved: _quoteSaved);
     final live = _live;
-    if (live != null) return ReadAlongView(sync: live);
+    if (live != null) return ReadAlongView(sync: live, onQuoteSaved: _quoteSaved);
     return const Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,

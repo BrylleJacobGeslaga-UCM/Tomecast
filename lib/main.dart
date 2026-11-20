@@ -27,6 +27,8 @@ Future<void> main() async {
       androidNotificationChannelName: 'Playback',
       androidNotificationOngoing: true,
       androidStopForegroundOnPause: true,
+      // White status-bar icon (the colorful app icon can't be used there).
+      androidNotificationIcon: 'drawable/ic_stat_tomecast',
     ),
   );
 
